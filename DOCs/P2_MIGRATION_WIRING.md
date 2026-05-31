@@ -115,27 +115,40 @@ voltage thresholds.
 
 ## 3. Wiring map: connection-board header → P2
 
-Signal columns are **certain** (from code). P2-pin column is a **suggested** assignment —
-the P2 has 64 freely-routable smart pins, so pick any; this set keeps the boot flash and
-serial intact (see reserved-pins note).
+Signal columns are **certain** (from code). The **P2-pin column is a committed
+assignment**: every signal maps to **P2 pins P8–P15**, ordered to mirror the robot
+connector's physical layout with **minimal wire crossover** — **P8 at the far end** of
+the connector, climbing to the **VCC end where the I²C pair lands on P14/P15**. Rows
+below run **far end → VCC end** to match the routing.
 
-| Conn-board header | BCM signal | Function (certain) | → Suggested P2 pin | Notes |
+**Why this is low-crossover:** of the six signals, **five are on the header's odd row**
+(ECHO 15, TRIG 13, Buzzer 11, SCL 5, SDA 3) and map straight across in order with no
+crossings. Only the **WS2812 LED (pin 12) is on the even row** — it's the single
+cross-row jump. The unused **P12–P13** fall in the header's own physical gap (pins
+7–10), so the spacing stays faithful end-to-end.
+
+| Conn-board header (far→VCC) | BCM signal | Function (certain) | P2 pin | Notes |
 |---|---|---|---|---|
-| Pin 3 (SDA1) | GPIO2 | **I²C SDA** → PCA9685 (servos), ADS7830 (battery), MPU6050 (IMU) | **P0** | 3.3 V open-drain; needs pull-ups (likely already on board) |
-| Pin 5 (SCL1) | GPIO3 | **I²C SCL** (same bus) | **P1** | same |
-| Pin 11 | GPIO17 | **Buzzer** drive | **P2** | P2 output; safe |
-| Pin 13 | GPIO27 | **Ultrasonic TRIG** | **P3** | P2 output (3.3 V triggers HC-SR04 fine) |
-| Pin 15 | GPIO22 | **Ultrasonic ECHO** (input) | **P4** | ⚠️ 5 V sensor — **must arrive ≤ 3.3 V** (§4) |
-| Pin 12 | GPIO18 | **WS2812 LED data** (PCB v1.0) | **P5** | P2 output; 3.3 V data into 5 V strip (§4) |
+| Pin 15 *(far end)* | GPIO22 | **Ultrasonic ECHO** (input) | **P8** | ⚠️ 5 V sensor — **must arrive ≤ 3.3 V** (§4) |
+| Pin 13 | GPIO27 | **Ultrasonic TRIG** | **P9** | P2 output (3.3 V triggers HC-SR04 fine) |
+| Pin 11 | GPIO17 | **Buzzer** drive | **P10** | P2 output; safe |
+| Pin 12 | GPIO18 | **WS2812 LED data** (PCB v1.0) | **P11** | only **even-row** signal → the one expected cross-row jump; 3.3 V data into 5 V strip (§4) |
+| — | — | *(spare — header's physical gap, pins 7–10)* | **P12–P13** | unassigned; available for future I/O |
+| Pin 5 (SCL1) | GPIO3 | **I²C SCL** (same bus) | **P14** | 3.3 V open-drain; shares pull-ups |
+| Pin 3 (SDA1) *(VCC end)* | GPIO2 | **I²C SDA** → PCA9685 (servos), ADS7830 (battery), MPU6050 (IMU) | **P15** | needs pull-ups (likely already on board) |
 | Pins 2, 4 | 5V | **Power IN from robot** | → P2 board **5 V input** | sized for the regulator (verify) |
 | Pins 1, 17 | 3.3V | **3.3 V the board's logic needs** | ← from P2 board **3.3 V out** | feed *back* to board (verify §2.2) |
 | Pins 6,9,14,20,25,30,34,39 | GND | Ground | **common GND** | tie robot GND ↔ P2 GND |
 
+> The Buzzer↔LED order on **P10/P11** is the one degree of freedom left (both sit at the
+> same longitudinal header position, pins 11 & 12 directly across from each other). Swap
+> them if the adapter's even-row routing prefers it.
+
 **P2 Edge reserved pins — don't use for robot I/O:** the Edge module uses **P58–P61** for
-the boot SPI flash and **P62/P63** for the serial/programming host. Keep robot signals on
-**P0–P57** (the suggestion above does). The experiment/breakout board supplies the module's
-3.3 V from a 5 V input — that's the regulator you feed from the robot's 5 V and tap to
-re-supply header pins 1/17.
+the boot SPI flash and **P62/P63** for the serial/programming host. The **P8–P15** block
+chosen above sits safely inside the usable **P0–P57** range. The experiment/breakout board
+supplies the module's 3.3 V from a 5 V input — that's the regulator you feed from the
+robot's 5 V and tap to re-supply header pins 1/17.
 
 ---
 

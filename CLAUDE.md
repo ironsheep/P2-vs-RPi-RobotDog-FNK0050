@@ -54,6 +54,23 @@ Only **three peripherals use discrete GPIO** (each a natural P2 smart-pin job):
 | HC-SR04 ultrasonic | TRIG GPIO27 (13), ECHO GPIO22 (15) | ECHO is the only GPIO **input**; 5 V echo must arrive ≤ 3.3 V |
 | WS2812 LED strip (7 px) | GPIO18 (12) — **v1.0** | data line; 3.3 V data into 5 V strip |
 
+### Committed P2 pin mapping (P8–P15)
+
+All signals route to **P2 pins P8–P15**, ordered to mirror the robot connector physically
+(minimal crossover): **P8 at the far end**, **P14/P15 (I²C) at the VCC end**. Five of six
+signals are on the header's odd row (straight across); the WS2812 LED is the lone even-row
+cross. Authoritative table + rationale: `DOCs/P2_MIGRATION_WIRING.md` §3.
+
+| P2 pin | Robo hdr pin | Signal |
+|--------|--------------|--------|
+| P8 | 15 | Ultrasonic ECHO (in) |
+| P9 | 13 | Ultrasonic TRIG |
+| P10 | 11 | Buzzer |
+| P11 | 12 | WS2812 LED data |
+| P12–P13 | — | spare (header gap) |
+| P14 | 5 | I²C SCL |
+| P15 | 3 | I²C SDA |
+
 Servo channel map (PCA9685 PWM channels, **not** Pi GPIO): ch 2–13 are the four legs
 (3 joints each), ch 15 is the head-pan servo; angle 0–180° → count 102–512.
 
@@ -67,7 +84,7 @@ Servo channel map (PCA9685 PWM channels, **not** Pi GPIO): ch 2–13 are the fou
 - The robot powers the controller (battery → board regulator → 5 V on header pins 2/4),
   not the reverse. Feed the P2 board 5 V; it regulates to 3.3 V on-board.
 - **P2 Edge reserved pins:** P58–P61 = boot SPI flash, P62/P63 = serial/programming.
-  Keep robot I/O on **P0–P57**.
+  Keep robot I/O on **P0–P57** — the committed P8–P15 block is safely inside that range.
 
 ## Working conventions
 
