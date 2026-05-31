@@ -5,7 +5,9 @@
 ![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-<img src='DOCs/Picture/fullbody-right.png' width='60%' alt='Freenove FNK0050 Robot Dog with the Parallax P2 Edge Module mounted where the Raspberry Pi used to sit'/>
+<p align="center">
+  <img src='DOCs/Picture/fullbody-right.png' width='60%' alt='Freenove FNK0050 Robot Dog with the Parallax P2 Edge Module mounted where the Raspberry Pi used to sit'/>
+</p>
 
 > *The FNK0050 Robot Dog with the Parallax **P2 Edge Module** mounted in place of the Raspberry Pi — the "P2 EDGE" module and chip are visible on top.*
 
