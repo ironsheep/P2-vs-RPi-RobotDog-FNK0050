@@ -22,8 +22,11 @@ bosses positioned to carry the P2 Edge breakout board:
 
 ## Print progression
 
-Getting the standoff height and hole alignment right took a few iterations — here are three
-printed test plates from that tuning, ending in the taller-standoff V2 design:
+Getting the standoff height and hole alignment right took a few iterations. The trick is to
+print **thin, quick test plates first** — just enough plate to verify the mounting-hole
+positions and the board footprint line up — before committing the time and filament to the
+full-height (taller-standoff) plate. Here are three of those test plates, ending in the V2
+design:
 
 <p align="center">
   <img src="../Picture/test-3d-prints.png" width="55%" alt="Three 3D-printed test plates showing the design progression"/>

@@ -223,3 +223,13 @@ __marimo__/
 # Reference material — upstream Freenove FNK0050 Raspberry Pi code, kept locally
 # for porting reference only; not part of this project's deliverables.
 REF/
+
+# --- devcontainer ---
+.devcontainer/docker-compose.override.yml
+.devcontainer/*.zip
+.claude/settings.local.json
+
+# --- local / per-machine devcontainer scaffolding ---
+.bashrc
+.mcp.json
+.vscode/
