@@ -1,5 +1,9 @@
 # P2-vs-RPi-RobotDog-FNK0050
 
+<img src='DOCs/Picture/icon.png' width='50%' alt='Freenove FNK0050 Robot Dog (shown with the stock Raspberry Pi — to be replaced with the P2 board)'/>
+
+> *Shown with the stock Raspberry Pi on top — to be replaced with the P2 board.*
+
 Porting the **Freenove Robot Dog Kit (FNK0050)** from its stock **Raspberry Pi**
 controller to a **Parallax Propeller 2 (P2)**. The P2 — on an Edge Module +
 breakout board carried by a custom adapter plate — drops into the spot where the
