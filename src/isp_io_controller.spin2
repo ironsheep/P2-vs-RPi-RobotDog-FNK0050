@@ -1,0 +1,288 @@
+'' =================================================================================================
+''
+''   File....... isp_io_controller.spin2
+''   Purpose.... Discrete-pin IO cog: owns the WS2812 LED, buzzer and ultrasonic; serves them
+''               non-blocking from one cog, tasked by the comms cog via a hub mailbox
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Launch in its OWN cog (the owner of the non-I2C pins) via
+   cogspin(NEWCOG, io.start(ledPin, buzzerPin, trigPin, echoPin), @stack).
+   It owns WS2812 (P11), buzzer (P10) and ultrasonic (P8/P9), and runs a NON-BLOCKING service
+   loop: step the LED animation, run the smart-pin ranging state machine, expire the buzzer.
+   Nothing blocks, so the three coexist with no jitter (smart pins do the timing -> ~1 % load).
+
+   The comms cog talks to this object ONLY through the hub mailbox: postCommand() to send
+   intent, getDistanceMm()/getPingSeq()/isLedBusy() to read telemetry. Those touch shared DAT
+   only -- never the pins -- so they are safe from another cog. See
+   DOCs/P2_FIRMWARE_THEORY_OF_OPS.md (the discrete-pin IO cog + mailbox B).
+}
+
+CON ' ---- IO commands (mailbox B) ----
+  {Spin2_Doc_CON}
+  ' Posted with postCommand(); consumed by the service loop:
+  '  IO_NONE       - no command
+  '  IO_LED_SOLID  - arg0 = packed $RRGGBB; all pixels that color
+  '  IO_LED_MODE   - arg0 = isp_led_ring mode (off/solid/wipe/chase/rainbow/cycle)
+  '  IO_LED_BRIGHT - arg0 = brightness 0..255
+  '  IO_LED_OFF    - blank the ring
+  '  IO_BUZZ_BEEP  - arg0 = duration ms (auto-off, non-blocking)
+  '  IO_BUZZ_OFF   - silence the buzzer
+  '  IO_RANGE_ON   - arg0 = ping interval ms (0 = default); start periodic ranging
+  '  IO_RANGE_OFF  - stop ranging
+  #0, IO_NONE, IO_LED_SOLID, IO_LED_MODE, IO_LED_BRIGHT, IO_LED_OFF, IO_BUZZ_BEEP, IO_BUZZ_OFF, IO_RANGE_ON, IO_RANGE_OFF
+
+CON ' ---- tuning ----
+  LED_FRAME_MS     = 30             ' LED animation frame period
+  PING_INTERVAL_MS = 60             ' periodic ranging cadence (>= HC-SR04 recovery)
+  ECHO_TIMEOUT_MS  = 30             ' no-echo deadline per ping
+  MS_TICKS_DIV     = 1000           ' clkfreq / 1000 = ticks per millisecond
+
+CON ' ---- ranging state ----
+  #0, R_IDLE, R_WAIT
+
+OBJ
+
+  ring   : "isp_led_ring"                                    ' WS2812 effects (P11)
+  buzzer : "isp_buzzer"                                      ' buzzer (P10)
+  sonic  : "isp_hcsr04"                                      ' ultrasonic (P8/P9), smart-pin mode
+  term   : "isp_serial_singleton"                            ' debug terminal output
+
+DAT ' ---- command mailbox B (comms cog writes, IO cog reads) ----
+
+  bCmdSeq  LONG  0                                            ' comms bumps this LAST (publish)
+  bCmdId   LONG  0
+  bCmdArg  LONG  0[4]
+  bAckSeq  LONG  0                                            ' IO cog sets = bCmdSeq when consumed
+
+DAT ' ---- IO telemetry (IO cog writes, anyone reads) ----
+
+  distMm   LONG  -1                                          ' latest distance (NO_ECHO if none)
+  pingSeq  LONG  0                                            ' bumps each new reading
+  ledBusy  LONG  0                                            ' 1 while an animated LED mode runs
+
+DAT ' ---- internal service state (IO cog only) ----
+
+  msTicks            LONG  0
+  ledFrameTicks      LONG  0
+  pingIntervalTicks  LONG  0
+  echoTimeoutTicks   LONG  0
+  ledActive          BYTE  FALSE
+  nextLedTick        LONG  0
+  buzzing            BYTE  FALSE
+  buzzerOffTick      LONG  0
+  rangingOn          BYTE  FALSE
+  rangeState         LONG  R_IDLE
+  nextPingTick       LONG  0
+  echoDeadline       LONG  0
+  bShowDebug         BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(ledPin, buzzerPin, trigPin, echoPin)
+'' Own the discrete pins and run the IO service loop (never returns). cogspin into its own cog.
+''
+'' @param ledPin - WS2812 data pin
+'' @param buzzerPin - buzzer pin
+'' @param trigPin - HC-SR04 TRIG pin
+'' @param echoPin - HC-SR04 ECHO pin (level-shifted to <= 3.3 V)
+
+    msTicks := clkfreq / MS_TICKS_DIV
+    ledFrameTicks := LED_FRAME_MS * msTicks
+    pingIntervalTicks := PING_INTERVAL_MS * msTicks
+    echoTimeoutTicks := ECHO_TIMEOUT_MS * msTicks
+
+    ring.start(ledPin)                                        ' configures + blanks the strip
+    buzzer.start(buzzerPin)
+    sonic.startSmart(trigPin, echoPin)                        ' non-blocking smart-pin ranging
+
+    nextLedTick := getct()
+    nextPingTick := getct()
+    serviceLoop()                                             ' never returns
+
+PUB postCommand(commandId, arg0, arg1, arg2, arg3)
+'' (comms cog) Publish a command to mailbox B. Latest-wins, single slot.
+''
+'' @param commandId - one of IO_LED_* / IO_BUZZ_* / IO_RANGE_*
+'' @param arg0 - command argument 0 (color / mode / level / ms / interval)
+'' @param arg1 - command argument 1 (reserved)
+'' @param arg2 - command argument 2 (reserved)
+'' @param arg3 - command argument 3 (reserved)
+
+    bCmdArg[0] := arg0
+    bCmdArg[1] := arg1
+    bCmdArg[2] := arg2
+    bCmdArg[3] := arg3
+    bCmdId := commandId
+    bCmdSeq++                                                 ' publish LAST (args now stable)
+
+PUB getDistanceMm() : milliMeters
+'' Return the most recent ultrasonic distance, mm (or NO_ECHO if the last ping found nothing).
+''
+'' @returns milliMeters - latest distance, mm
+
+    milliMeters := distMm
+
+PUB getPingSeq() : seq
+'' Return the ranging sequence counter (bumps on each new reading; lets readers detect freshness).
+''
+'' @returns seq - ping sequence number
+
+    seq := pingSeq
+
+PUB isLedBusy() : bBusy
+'' Return TRUE while an animated LED mode is running.
+''
+'' @returns bBusy - TRUE if the ring is animating
+
+    bBusy := (ledBusy <> 0)
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PRI serviceLoop()
+' The IO cog's main loop: consume commands and step each peripheral, all non-blocking.
+
+    repeat
+        if bCmdSeq <> bAckSeq
+            consumeCommand()
+        stepLed()
+        stepBuzzer()
+        stepRanging()
+
+PRI consumeCommand() | requestedCmd
+' Latch and acknowledge the newest mailbox-B command, then act on it.
+'
+' Local Variables:
+' @local requestedCmd - the command id being consumed
+
+    requestedCmd := bCmdId
+    bAckSeq := bCmdSeq
+    case requestedCmd
+        IO_LED_SOLID:
+            ring.setColor(bCmdArg[0])
+            ring.setMode(ring.MODE_SOLID)
+            ring.update()
+            ledActive := FALSE                                ' static -> show once, no stepping
+            ledBusy := FALSE
+        IO_LED_MODE:
+            ring.setMode(bCmdArg[0])
+            ring.update()
+            ledActive := (bCmdArg[0] >= ring.MODE_WIPE)       ' animated modes need stepping
+            ledBusy := ledActive
+        IO_LED_BRIGHT:
+            ring.setBrightness(bCmdArg[0])
+        IO_LED_OFF:
+            ring.setMode(ring.MODE_OFF)
+            ring.update()
+            ledActive := FALSE
+            ledBusy := FALSE
+        IO_BUZZ_BEEP:
+            buzzer.on()
+            buzzerOffTick := getct() + (bCmdArg[0] * msTicks)
+            buzzing := TRUE
+        IO_BUZZ_OFF:
+            buzzer.off()
+            buzzing := FALSE
+        IO_RANGE_ON:
+            rangingOn := TRUE
+            if bCmdArg[0] > 0
+                pingIntervalTicks := bCmdArg[0] * msTicks
+            nextPingTick := getct()
+            rangeState := R_IDLE
+        IO_RANGE_OFF:
+            rangingOn := FALSE
+
+PRI stepLed()
+' Advance the LED animation one frame when due (animated modes only).
+
+    if ledActive and due(nextLedTick)
+        ring.update()
+        nextLedTick := getct() + ledFrameTicks
+
+PRI stepBuzzer()
+' Silence the buzzer when its non-blocking beep expires.
+
+    if buzzing and due(buzzerOffTick)
+        buzzer.off()
+        buzzing := FALSE
+
+PRI stepRanging() | milliMeters
+' Non-blocking ranging state machine: fire on cadence, read the smart-pin echo, time out cleanly.
+'
+' Local Variables:
+' @local milliMeters - echoReadyMm() result this pass
+
+    if rangingOn
+        case rangeState
+            R_IDLE:
+                if due(nextPingTick)
+                    sonic.firePing()
+                    echoDeadline := getct() + echoTimeoutTicks
+                    rangeState := R_WAIT
+            R_WAIT:
+                milliMeters := sonic.echoReadyMm()
+                if milliMeters <> sonic.NOT_READY
+                    publishDistance(milliMeters)
+                elseif due(echoDeadline)
+                    publishDistance(sonic.NO_ECHO)
+
+PRI publishDistance(milliMeters)
+' Publish a ranging result and re-arm the next ping.
+'
+' @param milliMeters - the measured distance (or sonic.NO_ECHO)
+
+    distMm := milliMeters
+    pingSeq++
+    nextPingTick := getct() + pingIntervalTicks
+    rangeState := R_IDLE
+
+PRI due(deadlineTick) : bDue
+' Wrap-safe "is this getct() deadline reached?" check.
+'
+' @param deadlineTick - the getct() value to compare against
+' @returns bDue - TRUE once getct() has reached/passed deadlineTick
+
+    bDue := (getct() - deadlineTick) >= 0
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

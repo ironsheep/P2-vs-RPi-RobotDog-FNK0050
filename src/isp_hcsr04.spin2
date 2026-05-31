@@ -21,8 +21,13 @@
    GOTCHA: HC-SR04 ECHO is a 5 V output. It MUST be divided to <= 3.3 V before reaching the P2
    pin (the P2 is not 5 V tolerant). See DOCs/P2_MIGRATION_WIRING.md.
 
-   This draft polls the ECHO pin with getct() timing. A P2 smart-pin pulse-width measurement
-   is the production upgrade; the polled version is deterministic enough in a dedicated cog.
+   Two ranging paths:
+   -- BLOCKING poll: start() + readDistanceMm()/readDistanceCm() -- simple, used by the
+      bring-up console for standalone testing.
+   -- NON-BLOCKING smart pin: startSmart() + firePing() + echoReadyMm() -- the ECHO pin runs
+      in P_HIGH_TICKS mode and measures the echo high-time in hardware, so the cog never
+      busy-waits. Used by the discrete-pin IO cog (isp_io_controller) so LED + buzzer +
+      ranging coexist with no jitter. The caller owns the ping cadence and no-echo timeout.
 }
 
 CON ' ---- pulse timing & conversion ----
@@ -32,7 +37,9 @@ CON ' ---- pulse timing & conversion ----
   US_PER_CM       = 58              ' round-trip microseconds per centimeter (speed of sound)
   MM_PER_CM       = 10
   US_PER_SEC      = 1_000_000
-  NO_ECHO         = -1              ' returned when no echo arrives before timeout
+  NO_ECHO         = -1              ' no echo arrived before timeout (timeout owned by the caller)
+  NOT_READY       = -2              ' smart-pin echo not captured yet (non-blocking poll)
+  ECHO_TICK_MASK  = $7FFF_FFFF      ' RDPIN high-time field in P_HIGH_TICKS mode (Z reg)
 
 OBJ
 
@@ -117,6 +124,51 @@ PUB readDistanceCm() : distanceCm
     distanceCm := readDistanceMm()
     if distanceCm <> NO_ECHO
         distanceCm := distanceCm / MM_PER_CM
+
+CON { ---- NON-BLOCKING smart-pin ranging (for the IO cog) ---- }
+
+PUB startSmart(pinTRIG, pinECHO)
+'' Configure for NON-BLOCKING ranging: ECHO on a smart pin (P_HIGH_TICKS) measures the echo
+'' high-time in hardware. Pair firePing() + echoReadyMm() in a service loop; the caller owns
+'' the ping cadence and the no-echo timeout.
+''
+'' @param pinTRIG - P2 pin driving the HC-SR04 TRIG input
+'' @param pinECHO - P2 pin reading the (level-shifted) HC-SR04 ECHO output
+
+    trigPin := pinTRIG
+    echoPin := pinECHO
+    pinl(trigPin)
+    pinstart(echoPin, P_HIGH_TICKS, 0, 0)                     ' continuous high-pulse timing
+
+PUB firePing() | stale
+'' Launch one ping: clear any stale capture, then emit a 10 us TRIG pulse. Returns immediately.
+''
+
+' Local Variables:
+' @local stale - discarded prior capture (clears the smart pin's IN/Z)
+
+    stale := rdpin(echoPin)                                   ' clear any pending capture
+    pinl(trigPin)
+    waitus(TRIG_SETTLE_US)
+    pinh(trigPin)
+    waitus(TRIG_PULSE_US)
+    pinl(trigPin)
+
+PUB echoReadyMm() : distanceMm | echoTicks, ticksPerUs
+'' Non-blocking: if the echo pulse has completed, return distance in mm; else NOT_READY.
+'' (NO_ECHO on timeout is the caller's call — it owns the deadline.)
+''
+'' @returns distanceMm - distance in mm, or NOT_READY if the echo has not completed yet
+
+' Local Variables:
+' @local echoTicks - measured ECHO high-time, clock ticks
+' @local ticksPerUs - system clock ticks per microsecond
+
+    distanceMm := NOT_READY
+    if pinr(echoPin)                                          ' IN raised on echo high->low
+        echoTicks := rdpin(echoPin) & ECHO_TICK_MASK
+        ticksPerUs := clkfreq / US_PER_SEC
+        distanceMm := (echoTicks / ticksPerUs) * MM_PER_CM / US_PER_CM
 
 PUB enableDebug(bEnable)
 '' Turn on/off this object's debug messaging.

@@ -27,9 +27,10 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 > into a 5 V part (a level shifter is the robust fix). See `P2_MIGRATION_WIRING.md`.
 
 > **⚠ verify items.** Several constants are inferred from the Freenove code/datasheets, not
-> metered: ADC VREF + battery ÷2 divider (ex. 3), WS2812 bit timing (ex. 6), the
-> leg↔channel↔side map and the CORDIC IK (ex. 10). Where an exercise proves one of these,
-> it is marked **⚠**; record the measured reality in the notes.
+> metered: ADC VREF + battery ÷2 divider (ex. 3), the WS2812 **strip variant** (ex. 6 — bit
+> timing now matches `jm_rgbx_pixel`; only WS2812 350/700 vs WS2812B 400/800 ns remains to
+> confirm), the leg↔channel↔side map and the CORDIC IK (ex. 10). Where an exercise proves one
+> of these, it is marked **⚠**; record the measured reality in the notes.
 
 ---
 
@@ -160,13 +161,37 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 
 ---
 
-## Next (not in this harness)
+## Integration milestones (beyond the standalone console)
 
-Full-body integration — `isp_robot_dog` cooperative tasks, gaits, stand/relax/sit/hello, and
-the frontend↔backend mailbox — is the **integration** step, exercised once the top-level cog
-wiring exists (cogspin of `isp_robot_dog` + a frontend comms cog). Prove exercises 1-10 green
-first; do not run gaits until single-leg motion (ex. 10) is validated. See
-`P2_FIRMWARE_THEORY_OF_OPS.md`.
+Exercises 1-10 prove each driver **standalone** in the bring-up console's own cog. The
+production firmware runs them under two resource-owner service cogs plus a comms cog (see
+`P2_FIRMWARE_THEORY_OF_OPS.md`), so integration is **staged** — prove all of 1-10 green first.
+
+### Stage I — discrete-pin IO cog (`isp_io_controller`)
+
+- **Verifies:** one cog owns LED + buzzer + ultrasonic, served non-blocking via mailbox B.
+  Exercises **5 (buzzer)**, **6 (LED)**, **7 (ultrasonic)** are its per-driver prerequisites.
+  Note ex. 7 tests the *blocking* ranging path; the IO cog uses the **non-blocking smart-pin**
+  path (`startSmart`/`firePing`/`echoReadyMm`, `P_HIGH_TICKS`), first proven *here*.
+- **Setup:** a small top harness that `cogspin`s `isp_io_controller` and posts to mailbox B
+  via `postCommand` (**TODO** — analogous to the bring-up console). Robot supported as usual.
+- **Action / Expected:** post `IO_RANGE_ON` **+** an animated `IO_LED_MODE` **+** an
+  `IO_BUZZ_BEEP` together. The rainbow animates **smoothly while** `getDistanceMm()` updates
+  stream and a beep fires — **no hitching** in any of the three. The ~210 µs LED frame must not
+  disturb ranging; a beep must not freeze the animation. (Per D7: smart-pin timing → ~1 % cog
+  load → no jitter.)
+- **Pass/fail:** `[ ]`  concurrent LED + range + beep clean? ____
+
+### Stage II — backend body-control cog (`isp_robot_dog`)
+
+Motion + IMU/battery sensing under cooperative tasks on the **I²C-owning** cog, driven via
+mailbox A. Do **not** run gaits until single-leg motion (ex. 10) is validated.
+
+### Stage III — full robot
+
+Both service cogs + the comms cog wired together (`cogspin` of backend + IO + the comms loop);
+teleop via mailboxes A/B; gaits, poses, gestures. The top-level cog launch is the remaining
+build step. See `P2_FIRMWARE_THEORY_OF_OPS.md`.
 
 ---
 
