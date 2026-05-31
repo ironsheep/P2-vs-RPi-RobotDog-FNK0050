@@ -128,23 +128,24 @@ Whole-robot gestures (push-ups, the "hello" wave — which actually waves a *leg
 
 ---
 
-## 4. P2 pin map (committed P8–P15)
+## 4. P2 pin map (as-built P8–P15)
 
-All robot I/O routes to **P8–P15**, ordered to mirror the robot connector physically
-(P8 at the far end, the I²C pair at the VCC end). **Authoritative table + rationale:
+**As-built adapter map, verified on hardware 2026-05-31** (base P8; offsets LED +0, ECHO +1,
+Buzzer +2, TRIG +3, SCL +5, SDA +7). **Authoritative table + rationale:
 `../DOCs/P2_MIGRATION_WIRING.md` §3.**
 
 | P2 pin | Robo hdr pin | Signal | Driver object | Transport |
 |--------|--------------|--------|---------------|-----------|
-| P8 | 15 | Ultrasonic ECHO (input) | `isp_hcsr04` | smart pin (pulse in) |
-| P9 | 13 | Ultrasonic TRIG | `isp_hcsr04` | smart pin (pulse out) |
+| P8 | 12 | WS2812 LED data | `isp_ws2812` | inline PASM2 |
+| P9 | 15 | Ultrasonic ECHO (input) | `isp_hcsr04` | smart pin (pulse in); **~1 kΩ inline series R** |
 | P10 | 11 | Buzzer | `isp_buzzer` | smart pin |
-| P11 | 12 | WS2812 LED data | `isp_ws2812` | inline PASM2 |
-| P12–P13 | — | *spare (header gap)* | — | — |
-| P14 | 5 | I²C SCL | `isp_i2c_singleton` | I²C |
-| P15 | 3 | I²C SDA | `isp_i2c_singleton` | I²C |
+| P11 | 13 | Ultrasonic TRIG | `isp_hcsr04` | smart pin (pulse out) |
+| P12 | — | *spare* | — | — |
+| P13 | 5 | I²C SCL | `isp_i2c_singleton` | I²C (`PU_1K5`) |
+| P14 | — | *spare* | — | — |
+| P15 | 3 | I²C SDA | `isp_i2c_singleton` | I²C (`PU_1K5`; 6.9 kΩ board pull-down) |
 
-### Devices behind the I²C bus (P14/P15)
+### Devices behind the I²C bus (P13/P15)
 
 | Device | Addr (7-bit) | Driver | Role |
 |--------|--------------|--------|------|
@@ -170,8 +171,8 @@ comms plus two service cogs, one per hardware domain. In brief:
 - **Cog 1 — backend body-control:** the **sole owner of the I²C bus** (servos + IMU +
   battery); runs motion and IMU/battery sensing as **Spin2 v47 cooperative tasks** — so the
   shared bus is never touched by two cogs, with no lock.
-- **Cog 2 — discrete-pin IO:** owns the **non-I²C pins** — WS2812 LED (P11), buzzer (P10),
-  ultrasonic (P8/P9). One owner per pin (cross-cog pin handoff is costly); runs LED animation,
+- **Cog 2 — discrete-pin IO:** owns the **non-I²C pins** — WS2812 LED (P8), buzzer (P10),
+  ultrasonic (ECHO P9 / TRIG P11). One owner per pin (cross-cog pin handoff is costly); runs LED animation,
   ranging, and beeps as non-blocking tasks (smart-pin timing → ~1 % cog load, no jitter), and
   is the ultrasonic distance producer.
 

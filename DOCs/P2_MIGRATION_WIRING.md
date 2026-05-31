@@ -13,9 +13,15 @@ Raspberry Pi sits, via an adapter that mates to the connection board's 40-pin he
 `rpi_ws281x` path — see [`RPI_GPIO_USAGE.md`](RPI_GPIO_USAGE.md)).
 
 > ⚠️ **Confidence levels.** *Signal* assignments are **code-derived** (certain — traced in
-> the server source). Power *direction* is now **confirmed by Freenove's docs** (§1). The
-> exact *rail voltages* (5 V / 3.3 V) and the 3.3 V provenance are still **inferred** — no
-> schematic exists — so those carry a "**verify**" step. Measure before you wire.
+> the server source). Power *direction* is **confirmed by Freenove's docs** (§1).
+> **Bench-measured 2026-05-31** (Pi removed, P2 adapter not yet fitted): **5 V rail present**
+> (pins 2/4); **grounds common** (6/9/14 at 0 V); **3.3 V rail absent** (#1 gotcha confirmed),
+> pins 1/17 sitting at **~5 V**; and **no I²C pull-ups on the board** — SDA/SCL are open to both
+> rails (the Pi's own ~1.8 kΩ pull-ups left with it). So the **P2 must supply 3.3 V pull-ups**
+> and there is **no 5 V-idled-bus hazard** (§2, §4). The 3.3 V/5 V rails are **not bridged**
+> (30+ MΩ) so the 5 V on pins 1/17 is benign leakage and the **MPU6050 (VDD max 3.46 V) is
+> safe**. Remaining: **classify the SDA→GND 6.9 kΩ path** (resistor vs ESD diode) and check the
+> **ECHO divider** (§2, §4).
 
 ### Additional resources
 - **Freenove FNK0050 official docs (Robot Dog):** https://docs.freenove.com/projects/fnk0050/en/latest/
@@ -39,7 +45,10 @@ what a controller can source.
 indicators. **S1 = "Load"** gates the **servo** power rail (the docs have you toggle Load
 off to install screws so the servos aren't energized); the other switch gates main/logic
 (Pi) power. ➜ For P2 bring-up this is a gift: you can power the **P2 + logic with the Load
-switch OFF** to test I²C, sensors, and code with the legs de-powered, then enable servos.
+switch OFF** to test the **I²C devices** (servo controller, ADC, IMU) and code with the legs
+de-powered, then enable servos. **Exception (measured 2026-05-31): the ultrasonic is on the
+Load/servo rail** — it's only live with Load ON, so it can't be brought up in the legs-off mode;
+support the robot when testing it.
 
 **USB caveat:** a USB cable can power the Pi *in parallel* with the battery (*"you can still
 use cable to power Raspberry Pi with switches ON"*) — but **USB does not charge the
@@ -52,6 +61,10 @@ batteries** (see Battery & charging below).
   handed *out* to the connection board's logic/I²C pull-ups. **Remove the Pi and this rail
   vanishes** — your P2 adapter must *supply* 3.3 V back onto these pins if the board's I²C
   chips/pull-ups depend on it (very likely). This is the #1 gotcha.
+  **Bench-confirmed 2026-05-31:** with the Pi removed, pins 1/17 are **not** at 3.3 V — they
+  measure **~5 V** against grounds 6/9/14. The 5 V (vs floating) hints the rail may be
+  resistively pulled toward 5 V; the §2 resistance test will say through what. The adapter
+  must drive a real 3.3 V here.
 - Battery voltage (7.4 V nom / 8.4 V full / 6.4 V cutoff — from `ADS7830.py`,
   `Server.battery_reminder`) stays on the board's servo/sensor rails; it is **not** exposed
   on the 40-pin header.
@@ -117,38 +130,65 @@ voltage thresholds.
    sensor and the header. If raw 5 V reaches the header pin, **do not** connect it to the
    P2 without adding one (§4).
 
+### Bench measurements — 2026-05-31 (Pi removed, P2 adapter not yet fitted)
+
+> **Protocol:** resistance/continuity readings are taken with the **batteries OUT** (fully
+> de-energized) — required for valid ohmmeter readings. **Finding:** with the cells **in**, the
+> board is partially energized **even with both switches OFF** (readings shift), so the pack
+> feeds an **always-on path** (regulator input hard-wired to the battery and/or a standby /
+> battery-sense rail). ⇒ expect **parasitic standby drain** — pull the 18650s for storage, or
+> quantify the standby current. Voltage readings are taken batteries-in with the noted switch.
+
+| Check | Result | Status |
+|---|---|---|
+| **5 V rail** (pins 2/4 → GND) | **~5 V present** | ✅ measured |
+| **Grounds** (pins 6, 9, 14) | all **0 V** to each other (to the 3rd digit) → common ground | ✅ measured |
+| **3.3 V rail** (pins 1/17 → GND) | **not 3.3 V — reads ~5 V** vs grounds 6/9/14 (no 3.3 V anywhere on the header) | ⚠️ #1 gotcha confirmed; rail absent |
+| **I²C pull-ups** (unpowered Ω) | SDA(3)/SCL(5) → 3.3 V (1/17): **open** (≤ 0.8 MΩ); → 5 V (2/4): **8.8 MΩ** (both lines, both 5 V pins) | ✅ measured — **no board pull-ups on either rail** |
+| **Rails bridged?** (pin 1 ↔ pin 2) | **30–33 MΩ** | ✅ measured — **not bridged** (5 V on 1/17 is leakage only) |
+| **SDA / SCL → GND** (unpowered Ω) | SDA: **6.9 kΩ** (same both probe polarities) · SCL: **6.3 MΩ** | ✅ measured — **real ~6.9 kΩ pull-down on SDA** (not a diode) → use `PU_1K5` |
+| **ECHO @ header** (pin 15 → GND) | **15.5 MΩ** — no divider lower-leg | ✅ measured — board does NOT divide ECHO |
+| **HC-SR04 VCC / power** | **5 V**, on the 4-wire sensor cable; live **only with the Load/servo switch ON** | ✅ measured — ECHO = **5 V** ⇒ **~1 kΩ series R on P9**; ultrasonic not on logic power |
+
+> **✅ Pull-up rail & 5 V hazard — RESOLVED.** No board pull-ups on SDA/SCL — the Raspberry
+> Pi's own ~1.8 kΩ I²C-1 pull-ups to 3.3 V left **with the Pi** — and the 3.3 V/5 V rails are
+> **not bridged** (30+ MΩ), so the 5 V on pins 1/17 is harmless leakage and the **MPU6050
+> (VDD max 3.46 V) is not at risk**. There is **no 5 V-idled-bus hazard.** Action: the **P2
+> supplies the I²C pull-ups to 3.3 V** (`isp_i2c_singleton` `PU_3K3`/`PU_1K5`, or external) and
+> drives a real 3.3 V onto pins 1/17 — trivially overpowering the 30 MΩ leakage.
+>
+> **✅ SDA → GND = 6.9 kΩ — RESOLVED.** Same resistance in **both probe polarities** ⇒ a **real
+> ~6.9 kΩ resistor (a pull-down on SDA)**, not an ESD diode; SCL has none (6.3 MΩ). It loads the
+> bus high level, so **use the P2's strongest internal pull-up, `PU_1K5`** → SDA idles
+> 3.3 × 6.9/(1.5 + 6.9) ≈ **2.71 V** (valid high; VIH ≈ 2.31 V). **Avoid `PU_3K3`** (≈ 2.2 V →
+> fails). Add an external ~1 kΩ pull-up to 3.3 V for more margin if wanted. **Confirm SDA idles
+> ≈ 2.7 V once powered.** The asymmetric pull-down's origin is unknown (no schematic) — worth
+> understanding later; it does not block bring-up.
+
 ---
 
 ## 3. Wiring map: connection-board header → P2
 
-Signal columns are **certain** (from code). The **P2-pin column is a committed
-assignment**: every signal maps to **P2 pins P8–P15**, ordered to mirror the robot
-connector's physical layout with **minimal wire crossover** — **P8 at the far end** of
-the connector, climbing to the **VCC end where the I²C pair lands on P14/P15**. Rows
-below run **far end → VCC end** to match the routing.
+Signal columns are **certain** (from code). The **P2-pin column is the as-built adapter map,
+verified on hardware 2026-05-31**: base **P8**, with offsets **LED +0, ECHO +1, Buzzer +2,
+TRIG +3, SCL +5, SDA +7** (P12 and P14 left spare). Rows are in P2-pin order.
 
-**Why this is low-crossover:** of the six signals, **five are on the header's odd row**
-(ECHO 15, TRIG 13, Buzzer 11, SCL 5, SDA 3) and map straight across in order with no
-crossings. Only the **WS2812 LED (pin 12) is on the even row** — it's the single
-cross-row jump. The unused **P12–P13** fall in the header's own physical gap (pins
-7–10), so the spacing stays faithful end-to-end.
-
-| Conn-board header (far→VCC) | BCM signal | Function (certain) | P2 pin | Notes |
+| P2 pin | Robo hdr | BCM | Function (certain) | Notes |
 |---|---|---|---|---|
-| Pin 15 *(far end)* | GPIO22 | **Ultrasonic ECHO** (input) | **P8** | ⚠️ 5 V sensor — **must arrive ≤ 3.3 V** (§4) |
-| Pin 13 | GPIO27 | **Ultrasonic TRIG** | **P9** | P2 output (3.3 V triggers HC-SR04 fine) |
-| Pin 11 | GPIO17 | **Buzzer** drive | **P10** | P2 output; safe |
-| Pin 12 | GPIO18 | **WS2812 LED data** (PCB v1.0) | **P11** | only **even-row** signal → the one expected cross-row jump; 3.3 V data into 5 V strip (§4) |
-| — | — | *(spare — header's physical gap, pins 7–10)* | **P12–P13** | unassigned; available for future I/O |
-| Pin 5 (SCL1) | GPIO3 | **I²C SCL** (same bus) | **P14** | 3.3 V open-drain; shares pull-ups |
-| Pin 3 (SDA1) *(VCC end)* | GPIO2 | **I²C SDA** → PCA9685 (servos), ADS7830 (battery), MPU6050 (IMU) | **P15** | needs pull-ups (likely already on board) |
-| Pins 2, 4 | 5V | **Power IN from robot** | → P2 board **5 V input** | sized for the regulator (verify) |
-| Pins 1, 17 | 3.3V | **3.3 V the board's logic needs** | ← from P2 board **3.3 V out** | feed *back* to board (verify §2.2) |
-| Pins 6,9,14,20,25,30,34,39 | GND | Ground | **common GND** | tie robot GND ↔ P2 GND |
+| **P8** | 12 | GPIO18 | **WS2812 LED data** (PCB v1.0) | 3.3 V data into 5 V strip (§4) |
+| **P9** | 15 | GPIO22 | **Ultrasonic ECHO** (input) | 5 V undivided → **~1 kΩ inline series R** + P2 clamp (§4); sensor live only with Load switch ON |
+| **P10** | 11 | GPIO17 | **Buzzer** drive | P2 output; safe |
+| **P11** | 13 | GPIO27 | **Ultrasonic TRIG** | P2 output (3.3 V triggers HC-SR04 fine) |
+| **P12** | — | — | *spare* | unassigned |
+| **P13** | 5 | GPIO3 | **I²C SCL** | 3.3 V open-drain; **P2 supplies pull-up (`PU_1K5`)** |
+| **P14** | — | — | *spare* | unassigned |
+| **P15** | 3 | GPIO2 | **I²C SDA** → PCA9685 (servos), ADS7830 (battery), MPU6050 (IMU) | **6.9 kΩ board pull-down → `PU_1K5`** |
+| — | 2, 4 | 5V | **Power IN from robot** → P2 board 5 V input | sized for the regulator (verify) |
+| — | 1, 17 | 3.3V | **3.3 V** ← from P2 board 3.3 V out | feed *back* to board; chips' VDD + bus reference |
+| — | 6,9,14,… | GND | Ground → **common GND** | tie robot GND ↔ P2 GND |
 
-> The Buzzer↔LED order on **P10/P11** is the one degree of freedom left (both sit at the
-> same longitudinal header position, pins 11 & 12 directly across from each other). Swap
-> them if the adapter's even-row routing prefers it.
+> Map is **as-built and verified on hardware** (2026-05-31) — not a proposal. ECHO carries a
+> ~1 kΩ inline series resistor into P9 (5 V; P2 clamp). P12 and P14 are the spares.
 
 **P2 Edge reserved pins — don't use for robot I/O:** the Edge module uses **P58–P61** for
 the boot SPI flash and **P62/P63** for the serial/programming host. The **P8–P15** block
@@ -158,18 +198,41 @@ robot's 5 V and tap to re-supply header pins 1/17.
 
 ---
 
-## 4. 3.3 V vs 5 V hazards (P2 is NOT 5 V tolerant)
+## 4. 3.3 V vs 5 V — over-voltage handling (P2 pins clamp to VIO, ≤ ±10 mA)
 
 | Line | Direction | Risk | Action |
 |---|---|---|---|
-| **I²C SDA/SCL** | bidir | If pull-ups go to **5 V**, the bus idles at 5 V → kills P2 pins | Confirm pull-ups tie to 3.3 V (Pi-style). If 5 V, use a proper I²C level shifter (e.g. BSS138 bidirectional) |
-| **Ultrasonic ECHO** | sensor→P2 | HC-SR04 echo is a **5 V** output | Confirm/add a divider so the P2 sees ≤ 3.3 V (e.g. 1 kΩ series + 2 kΩ to GND, or a level shifter). Or run the sensor at 3.3 V if it's a 3.3 V-tolerant variant |
+| **I²C SDA/SCL** | bidir | **No board pull-ups** (open to both rails); **SDA has a real ~6.9 kΩ pull-down to GND** (2026-05-31, §2). Bus is 3.3 V — no 5 V hazard | **P2 supplies the pull-ups** — use the strongest internal mode **`PU_1K5`** so SDA idles ~2.71 V over the pull-down (valid high; **`PU_3K3` ≈ 2.2 V → fails**). Seed `isp_i2c_pca9685` uses `PU_NONE` → **change to `PU_1K5`**. Optional external ~1 kΩ to 3.3 V for margin. |
+| **Ultrasonic ECHO** | sensor→P2 | HC-SR04 echo = **5 V** (VCC measured 5 V, undivided) | **Fit a ~1 kΩ series R into P9** — the P2 pin clamps the 5 V to VIO (≤ 10 mA). Ultrasonic is powered only with the **Load/servo switch ON** (4-wire cable: GND/VCC/ECHO/TRIG) |
 | **Ultrasonic TRIG** | P2→sensor | P2 drives 3.3 V; HC-SR04 trigger threshold usually OK | Safe; if flaky, level-shift up to 5 V |
 | **Buzzer** | P2→board | Driving a transistor/driver from 3.3 V | Safe (output) |
 | **WS2812 data** | P2→strip | 3.3 V data into a 5 V strip (data-high threshold ≈ 0.7·Vcc) | The Pi did this at 3.3 V already; usually works. If the first pixel is unreliable, add a 3.3→5 V level shifter (74AHCT125) or power the strip at ~4.3 V |
 
-P2 pins have **configurable drive strength** (1.5 kΩ / 15 kΩ / ~1 mA / actual-drive
-modes); set adequate drive for TRIG, buzzer, and the LED data line in firmware.
+P2 pins have **configurable drive strength / pull-ups / pull-downs** (P_HIGH_FLOAT / 1K5 /
+15K / ~1 mA modes via the WRPIN M-field); set adequate drive for TRIG, buzzer, and the LED
+data line, and use the internal pull-ups to source the (absent) I²C bus pull-ups to 3.3 V.
+
+**P2 over-voltage clamp (datasheet).** Each P2 I/O pin has an internal **clamp diode to VIO**
+(≈ 3.3 V); the abs-max "VIO + 0.3 V" is that diode's forward drop. The datasheet **explicitly
+permits over-voltage** as long as the clamp's forward current stays **≤ ±10 mA**. So a P2 pin
+safely *reads* a higher-voltage signal through a current-limiting series resistor:
+R ≥ (Vin − 3.6 V) / 10 mA → for 5 V, R ≥ ~140 Ω; use **~1 kΩ** (≈ 1.4 mA) for margin. The clamp
+current flows into VIO (trivial vs the P2's draw; raise R if that rail is ever lightly loaded).
+*Caveats:* a **bare** pin must still stay ≤ VIO + 0.3 V, and the P2 cannot **drive** 5 V — the
+series resistor is what makes reading 5 V safe. **The Raspberry Pi's GPIO, by contrast, is 3.3 V
+and NOT 5 V-tolerant with no such clamp headroom** — which is itself a useful clue (next).
+
+**ECHO is 5 V — RESOLVED (measured 2026-05-31).** pin 15 → GND = **15.5 MΩ** (no divider
+lower-leg on the ECHO net) **and** the **HC-SR04 VCC = 5 V**, measured on the **4-wire sensor
+cable** (GND/VCC/ECHO/TRIG — a direct passthrough to the daughterboard, no in-line divider). So
+ECHO reaches header pin 15 as an **undivided 5 V** push-pull pulse. The
+original Pi evidently tolerated this without a divider (not recommended); the **P2 does it
+correctly with a ~1 kΩ series resistor into P9** — the pin clamps the 5 V to VIO with the
+resistor holding clamp current to ~1.4 mA (≤ 10 mA).
+
+**Power domain:** the ultrasonic is powered **only when the Load/servo switch is ON** — it is
+*not* on the logic rail, so it can't be exercised in the legs-de-powered "safe" mode. Bring it
+up with **Load on and the robot supported**.
 
 ---
 
@@ -189,12 +252,12 @@ Most of the robot is on **I²C**, so porting is mostly "implement an I²C master
 
 ## 6. Pre-wiring checklist
 
-- [ ] Meter the **5 V** rail on header pins 2/4; confirm the board regulator's current headroom.
-- [ ] Determine **3.3 V provenance** (pins 1/17): is board logic powered from it? If yes,
-      plan to source 3.3 V from the P2 board back onto those pins.
-- [ ] Confirm **I²C pull-up rail** is 3.3 V (not 5 V).
-- [ ] Confirm/add the **ECHO divider** so the P2 never sees 5 V.
-- [ ] Establish a single **common ground**.
+- [x] Meter the **5 V** rail on header pins 2/4 — **~5 V present (2026-05-31)**; still confirm the board regulator's current headroom.
+- [~] Determine **3.3 V provenance** (pins 1/17) — **measured ~5 V, not 3.3 V (2026-05-31)**; rail is absent and pulled toward 5 V. Run the resistance test to find through what.
+- [ ] Confirm **I²C pull-up rail** is 3.3 V (not 5 V) — **PENDING & gating**: pins 1/17 currently 5 V; resolve before connecting the P2 (§2 test, §4).
+- [x] **ECHO is 5 V, undivided** (pin 15→GND 15.5 MΩ; VCC 5 V, 2026-05-31) → fit a **~1 kΩ series
+      R into P9** (P2 pin clamp, ≤10 mA). Ultrasonic is on the **Load/servo rail** — only live with Load ON.
+- [~] Establish a single **common ground** — robot grounds (pins 6/9/14) **verified consistent at 0 V (2026-05-31)**; still tie robot GND ↔ P2 GND at wiring.
 - [ ] Keep robot signals on **P0–P57**; leave **P58–P63** for flash/serial.
 
 ---

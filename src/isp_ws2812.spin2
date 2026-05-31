@@ -19,7 +19,7 @@
    Display modes/effects live one tier up in isp_led_ring. WS2812 is a single discrete data
    line (no I2C), so there is no shared bus singleton.
 
-   Robot Dog (FNK0050), PCB v1.0: 7-pixel WS2812 strip on P2 pin P11 (robo hdr 12). GOTCHA:
+   Robot Dog (FNK0050), PCB v1.0: 7-pixel WS2812 strip on P2 pin P8 (robo hdr 12). GOTCHA:
    the P2 drives 3.3 V data into a 5 V part -- usually works but out of spec; a level shifter
    on the data line is the robust fix (see DOCs/P2_MIGRATION_WIRING.md).
 

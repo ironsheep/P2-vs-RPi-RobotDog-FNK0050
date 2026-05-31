@@ -24,7 +24,7 @@ owns the object/tier map.
 | D3 | **Command mailbox is latest-wins, single slot** — with a "reject if busy" rule for one-shot gestures | teleop semantics; no stale command backlog |
 | D4 | **One cog owns the I²C bus** — IMU + servos + battery ADC all share one physical bus | only safe way to multi-master a single bus without a lock |
 | D5 | **Backend concurrency is Spin2 v47 cooperative tasks** (coroutines), not separate cogs or interrupts | no preemption → no mid-transaction bus corruption; no lock |
-| D6 | **A discrete-pin IO cog owns all non-I²C peripherals** — WS2812 LED (P11), buzzer (P10), ultrasonic (P8/P9). The top level *tasks* it via a mailbox and never blocks. | one owner *per pin* (smart-pin handoff across cogs is costly); consolidating the discrete-pin domain offloads the top level. Ultrasonic still behaves as a producer (publishes distance). Head-pan stays with the backend — it's a PCA9685/I²C channel. |
+| D6 | **A discrete-pin IO cog owns all non-I²C peripherals** — WS2812 LED (P8), buzzer (P10), ultrasonic (ECHO P9/TRIG P11). The top level *tasks* it via a mailbox and never blocks. | one owner *per pin* (smart-pin handoff across cogs is costly); consolidating the discrete-pin domain offloads the top level. Ultrasonic still behaves as a producer (publishes distance). Head-pan stays with the backend — it's a PCA9685/I²C channel. |
 | D7 | **The IO cog runs non-blocking** — smart-pin pulse-measure ranging, timer/smart-pin buzzer, frame-stepped LED — so all three multiplex on one cog with **no jitter**. | P2 headroom + smart-pin timing offload mean ~1 % cog load; HC-SR04's own ~15–20 Hz echo physics caps ranging rate, not the cog. No reason to split ranging onto its own cog. |
 
 ---
@@ -38,10 +38,10 @@ operative word, because a hardware resource shared across cogs is the central ha
 > **Two resource domains, each with a single owner cog:**
 >
 > 1. **The I²C bus** — PCA9685 servos (`0x40`), ADS7830 battery ADC (`0x48`), MPU6050 IMU
->    (`0x68`) all sit on one physical bus (P14/P15). A bus cannot be driven by two cogs
+>    (`0x68`) all sit on one physical bus (P13/P15). A bus cannot be driven by two cogs
 >    without a hardware lock, and `isp_i2c_singleton` holds bus state in shared DAT, so
 >    **exactly one cog owns it** (*mandatory* — it is one shared resource).
-> 2. **The discrete pins** — WS2812 (P11), buzzer (P10), ultrasonic (P8/P9). A *single pin*
+> 2. **The discrete pins** — WS2812 (P8), buzzer (P10), ultrasonic (ECHO P9/TRIG P11). A *single pin*
 >    cannot be cheaply shared across cogs: smart-pin mode is per-pin state and DIR/OUT OR
 >    across cogs, so handing a pin between cogs means reconfiguring it. The rule is therefore
 >    **one owner cog *per pin*.** Consolidating all discrete-pin devices into one **IO cog**
@@ -53,8 +53,8 @@ operative word, because a hardware resource shared across cogs is the central ha
 | Cog | Role | Owns (hardware) | Talks to others via |
 |-----|------|-----------------|---------------------|
 | **0** | **Comms / orchestration** | the command link (Wi-Fi/serial) only | writes command mailboxes A + B; reads telemetry + ping |
-| **1** | **Backend body-control** | **the I²C bus** (P14/P15): 13 servos, IMU, battery ADC | reads command mailbox A; writes telemetry |
-| **2** | **Discrete-pin IO** | WS2812 LED (P11), buzzer (P10), ultrasonic (P8/P9) | reads command mailbox B; writes ping/IO telemetry |
+| **1** | **Backend body-control** | **the I²C bus** (P13/P15): 13 servos, IMU, battery ADC | reads command mailbox A; writes telemetry |
+| **2** | **Discrete-pin IO** | WS2812 LED (P8), buzzer (P10), ultrasonic (ECHO P9/TRIG P11) | reads command mailbox B; writes ping/IO telemetry |
 | 3–7 | free | — | — |
 
 Two service cogs by resource domain (backend = I²C, IO = discrete pins), each fed by a

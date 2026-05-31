@@ -22,9 +22,9 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 > section / `«#N»` task.
 
 > **SAFETY — read before exercises 8-10.** Those move servos. **Lift and support the robot**
-> so the legs hang free first. The P2 is **not 5 V tolerant**: the HC-SR04 **ECHO** line
-> (exercise 7) must be divided to ≤ 3.3 V before it reaches P8, and the WS2812 data is 3.3 V
-> into a 5 V part (a level shifter is the robust fix). See `P2_MIGRATION_WIRING.md`.
+> so the legs hang free first. P2 over-voltage: the HC-SR04 **ECHO** (5 V, exercise 7) reaches
+> **P9 through a ~1 kΩ inline series resistor** (the P2 pin clamps it to VIO, ≤ 10 mA); the
+> WS2812 data is 3.3 V into a 5 V part (usually fine). See `P2_MIGRATION_WIRING.md` §4.
 
 > **⚠ verify items.** Several constants are inferred from the Freenove code/datasheets, not
 > metered: ADC VREF + battery ÷2 divider (ex. 3), the WS2812 **strip variant** (ex. 6 — bit
@@ -57,7 +57,8 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 ## 2. I²C bus scan  — menu `1`
 
 - **Verifies:** I²C master (`isp_i2c_singleton`), the **3.3 V rail restored onto header pins
-  1/17**, and the on-board pull-ups (#1 migration gotcha). Detects PCA9685 / ADS7830 / MPU6050.
+  1/17**, and the **P2-supplied pull-ups (`PU_1K5`)** — the board has none (#1 migration gotcha).
+  Detects PCA9685 / ADS7830 / MPU6050. (Requires the bus set up with `PU_1K5`, not `PU_NONE`.)
 - **Targets:** 1 P2 + connection board powered from the battery.
 - **Setup:** Battery connected; nothing lifted needed.
 - **Action:** Press `1`.
@@ -101,7 +102,7 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 
 ## 6. LED ring  — menu `5` (live)  ⚠
 
-- **Verifies:** `isp_led_ring` → `isp_ws2812` on P11; GRB framing, brightness, modes,
+- **Verifies:** `isp_led_ring` → `isp_ws2812` on P8; GRB framing, brightness, modes,
   WS2812 bit timing.
 - **Targets:** 1 P2 + 7-pixel strip.
 - **Setup:** none (a level shifter on the data line is recommended).
@@ -114,9 +115,12 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 
 ## 7. Ultrasonic  — menu `6` (live)
 
-- **Verifies:** `isp_hcsr04` on TRIG P9 / ECHO P8; trigger pulse + echo timing + mm conversion.
-- **Targets:** 1 P2 + HC-SR04 (**ECHO level-shifted to ≤ 3.3 V**).
-- **Setup:** Confirm the ECHO divider is in place before connecting.
+- **Verifies:** `isp_hcsr04` on TRIG P11 / ECHO P9; trigger pulse + echo timing + mm conversion.
+- **Targets:** 1 P2 + HC-SR04. ECHO is **5 V, undivided** (metered 2026-05-31) → **~1 kΩ series
+  resistor into P9** (P2 pin clamps to VIO, ≤ 10 mA); no divider.
+- **Setup:** ⚠️ The ultrasonic is on the **Load/servo rail** — turn the **Load switch ON** to
+  power it (the logic-only "legs-off" mode won't), so **support the robot** for this test.
+  Confirm the ~1 kΩ series R is in line to P9 before connecting.
 - **Action:** Press `6`. Move a hand/target to known distances (e.g. 100 mm, 300 mm). Press a
   key to stop.
 - **Expected:** Distance tracks the target within ~±10 mm; `-- no echo --` when pointed at

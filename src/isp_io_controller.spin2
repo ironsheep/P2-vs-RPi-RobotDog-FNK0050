@@ -16,7 +16,7 @@
 
    Launch in its OWN cog (the owner of the non-I2C pins) via
    cogspin(NEWCOG, io.start(ledPin, buzzerPin, trigPin, echoPin), @stack).
-   It owns WS2812 (P11), buzzer (P10) and ultrasonic (P8/P9), and runs a NON-BLOCKING service
+   It owns WS2812 (P8), buzzer (P10) and ultrasonic (ECHO P9 / TRIG P11), and runs a NON-BLOCKING service
    loop: step the LED animation, run the smart-pin ranging state machine, expire the buzzer.
    Nothing blocks, so the three coexist with no jitter (smart pins do the timing -> ~1 % load).
 
@@ -51,9 +51,9 @@ CON ' ---- ranging state ----
 
 OBJ
 
-  ring   : "isp_led_ring"                                    ' WS2812 effects (P11)
+  ring   : "isp_led_ring"                                    ' WS2812 effects (P8)
   buzzer : "isp_buzzer"                                      ' buzzer (P10)
-  sonic  : "isp_hcsr04"                                      ' ultrasonic (P8/P9), smart-pin mode
+  sonic  : "isp_hcsr04"                                      ' ultrasonic (ECHO P9 / TRIG P11), smart-pin mode
   term   : "isp_serial_singleton"                            ' debug terminal output
 
 DAT ' ---- command mailbox B (comms cog writes, IO cog reads) ----

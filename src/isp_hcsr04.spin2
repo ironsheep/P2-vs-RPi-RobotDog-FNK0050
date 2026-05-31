@@ -13,7 +13,7 @@
 
 { Description and usage notes:
 
-   Robot Dog (FNK0050): HC-SR04 on P2 pins -- TRIG = P9 (robo hdr 13), ECHO = P8 (robo hdr 15).
+   Robot Dog (FNK0050): HC-SR04 on P2 pins -- TRIG = P11 (robo hdr 13), ECHO = P9 (robo hdr 15).
    A 10 us TRIG pulse launches a burst; ECHO stays high for the round-trip time. Distance is
    echo_time / 58 us-per-cm (speed of sound). Discrete pins, not on the I2C bus -- this object
    is meant to run in its own cog as a producer (see DOCs/P2_FIRMWARE_THEORY_OF_OPS.md).

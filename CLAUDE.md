@@ -56,19 +56,19 @@ Only **three peripherals use discrete GPIO** (each a natural P2 smart-pin job):
 
 ### Committed P2 pin mapping (P8–P15)
 
-All signals route to **P2 pins P8–P15**, ordered to mirror the robot connector physically
-(minimal crossover): **P8 at the far end**, **P14/P15 (I²C) at the VCC end**. Five of six
-signals are on the header's odd row (straight across); the WS2812 LED is the lone even-row
-cross. Authoritative table + rationale: `DOCs/P2_MIGRATION_WIRING.md` §3.
+All signals route to **P2 pins P8–P15**. **As-built adapter map (verified on hardware
+2026-05-31)**, base P8 with offsets LED +0, ECHO +1, Buzzer +2, TRIG +3, SCL +5, SDA +7.
+Authoritative table + rationale: `DOCs/P2_MIGRATION_WIRING.md` §3.
 
 | P2 pin | Robo hdr pin | Signal |
 |--------|--------------|--------|
-| P8 | 15 | Ultrasonic ECHO (in) |
-| P9 | 13 | Ultrasonic TRIG |
+| P8 | 12 | WS2812 LED data |
+| P9 | 15 | Ultrasonic ECHO (in) — 5 V undivided → ~1 kΩ inline series R |
 | P10 | 11 | Buzzer |
-| P11 | 12 | WS2812 LED data |
-| P12–P13 | — | spare (header gap) |
-| P14 | 5 | I²C SCL |
+| P11 | 13 | Ultrasonic TRIG |
+| P12 | — | spare |
+| P13 | 5 | I²C SCL |
+| P14 | — | spare |
 | P15 | 3 | I²C SDA |
 
 Servo channel map (PCA9685 PWM channels, **not** Pi GPIO): ch 2–13 are the four legs
@@ -76,9 +76,13 @@ Servo channel map (PCA9685 PWM channels, **not** Pi GPIO): ch 2–13 are the fou
 
 ### Critical electrical gotchas
 
-- **The P2 is a 3.3 V part and is NOT 5 V tolerant** (pin abs-max ≈ 3.6 V). Every
-  signal into a P2 pin must be ≤ 3.3 V. Watch the 5 V-native sensors (HC-SR04 ECHO,
-  WS2812).
+- **P2 over-voltage:** the P2 cannot *drive* 5 V, and a *bare* pin must stay ≤ VIO+0.3 V
+  (~3.6 V) — **but** the datasheet permits over-voltage via the pin's internal clamp diode to
+  VIO as long as clamp current ≤ ±10 mA, so a **~1 kΩ series resistor lets a P2 pin safely
+  *read* 5 V** (e.g. HC-SR04 ECHO; R ≥ (Vin−3.6)/10 mA). The original **RPi GPIO was 3.3 V and
+  NOT 5 V-tolerant** with no such clamp — so the connection board very likely *already* divides
+  ECHO ≤ 3.3 V; measure header pin 15 before adding anything. (Verify the clamp/abs-max in the
+  P2 datasheet; see `DOCs/P2_MIGRATION_WIRING.md` §4.)
 - **3.3 V rail vanishes with the Pi.** Header pins 1/17 were fed *by the Pi*; the P2
   adapter must supply 3.3 V back onto them for the board's I²C pull-ups/chips. #1 gotcha.
 - The robot powers the controller (battery → board regulator → 5 V on header pins 2/4),

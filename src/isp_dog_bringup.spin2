@@ -20,20 +20,21 @@
    SAFETY: the servo tests (7-9) move hardware. LIFT/SUPPORT the robot so the legs are free
    before running them, and keep the battery connected (the board regulates from the pack).
 
-   Pin map (DOCs/P2_MIGRATION_WIRING.md): SCL=P14, SDA=P15, buzzer=P10, WS2812=P11,
-   ultrasonic TRIG=P9 / ECHO=P8. ECHO must be level-shifted to <= 3.3 V.
+   Pin map (as-built, DOCs/P2_MIGRATION_WIRING.md): WS2812=P8, ECHO=P9, buzzer=P10, TRIG=P11,
+   SCL=P13, SDA=P15. ECHO is 5 V undivided -> ~1k inline series resistor into P9 (P2 pin clamp).
 }
 
 CON ' ---- clock ----
   _clkfreq = 200_000_000
 
 CON ' ---- pins & link ----
-  PIN_SCL       = 14
-  PIN_SDA       = 15
-  PIN_BUZZER    = 10
-  PIN_WS2812    = 11
-  PIN_TRIG      = 9
-  PIN_ECHO      = 8
+  ' As-built adapter map (base P8): LED +0, ECHO +1, Buzzer +2, TRIG +3, SCL +5, SDA +7
+  PIN_WS2812    = 8                 ' P8  (+0)
+  PIN_ECHO      = 9                 ' P9  (+1)  5 V undivided -> ~1k inline series R
+  PIN_BUZZER    = 10                ' P10 (+2)
+  PIN_TRIG      = 11                ' P11 (+3)
+  PIN_SCL       = 13                ' P13 (+5)
+  PIN_SDA       = 15                ' P15 (+7)
   PIN_OE_UNUSED = -1                ' PCA9685 /OE not driven by the P2
   PROG_BAUD     = 2_000_000          ' project standard: all P2 comms at 2 Mbaud (= P2_DEBUG_BAUD)
 
