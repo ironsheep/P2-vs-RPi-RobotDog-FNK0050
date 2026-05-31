@@ -53,7 +53,6 @@ Start here when planning or executing the hardware swap:
   3.3 V-vs-5 V level-shifting hazards (the P2 is **not** 5 V tolerant).
 - **[`DOCs/P2-platform/`](DOCs/P2-platform/)** — CAD (DXF + 3MF) for the adapter
   plate that mounts the P2 board in the Pi's footprint.
-- **[`DOCs/Picture/`](DOCs/Picture/)** — connection-board photos and kit imagery.
 
 ## Hardware reference
 

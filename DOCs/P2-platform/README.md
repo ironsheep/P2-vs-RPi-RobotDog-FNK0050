@@ -8,7 +8,28 @@
 Mechanical CAD for the adapter plate that drops a **Propeller 2 Edge Module +
 breakout board** into the spot where the Raspberry Pi normally sits on the
 Robot Dog connection board. See [`../P2_MIGRATION_WIRING.md`](../P2_MIGRATION_WIRING.md)
-for the electrical side of the swap.
+for the electrical side of the swap, and [`../HARDWARE_SETUP.md`](../HARDWARE_SETUP.md)
+for the full build walk-through.
+
+## The model
+
+The plate is modeled in Shapr3D to match the Pi's mounting footprint, with raised standoff
+bosses positioned to carry the P2 Edge breakout board:
+
+<p align="center">
+  <img src="../Picture/p2-platform.png" width="75%" alt="Shapr3D CAD model of the P2 mount plate"/>
+</p>
+
+## Print progression
+
+Getting the standoff height and hole alignment right took a few iterations — here are three
+printed test plates from that tuning, ending in the taller-standoff V2 design:
+
+<p align="center">
+  <img src="../Picture/test-3d-prints.png" width="55%" alt="Three 3D-printed test plates showing the design progression"/>
+</p>
+
+## Files
 
 | File | Format | What it is |
 |------|--------|------------|
