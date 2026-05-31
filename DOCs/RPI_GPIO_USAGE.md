@@ -1,5 +1,11 @@
 # Raspberry Pi GPIO / Pin Usage
 
+![Doc Type](https://img.shields.io/badge/doc-pin%20reference-blue)
+![Platform](https://img.shields.io/badge/platform-Propeller%202-blue)
+![PCB](https://img.shields.io/badge/PCB-v1.0-orange)
+![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 Reverse-engineered from the server source (`Code/Server/`). **No schematic exists** for
 this kit in the repo — every pin below was traced from the code that drives it, with the
 file/line cited. All GPIO numbers are **BCM** (Broadcom) numbering, which is what both
@@ -139,3 +145,15 @@ legacy stack on Bullseye.
 - Header pin numbers assume the standard 40-pin Raspberry Pi GPIO header.
 - The version-dependent LED pin (GPIO18 vs GPIO10) is the single biggest gotcha for any
   port: read `params.json` before assuming which line carries LED data.
+
+---
+
+## License
+
+MIT License - See [LICENSE](../LICENSE) for details.
+
+---
+
+*Part of the Iron Sheep Productions Propeller 2 Projects Collection*
+
+---

@@ -1,5 +1,11 @@
 # P2 Migration — Power & Wiring Map (replacing the Raspberry Pi)
 
+![Doc Type](https://img.shields.io/badge/doc-wiring%20map-blue)
+![Platform](https://img.shields.io/badge/platform-Propeller%202-blue)
+![PCB](https://img.shields.io/badge/PCB-v1.0-orange)
+![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 Goal: drop a **Propeller 2 Edge Module + experiment/breakout board** in where the
 Raspberry Pi sits, via an adapter that mates to the connection board's 40-pin header.
 
@@ -190,3 +196,15 @@ Most of the robot is on **I²C**, so porting is mostly "implement an I²C master
 - [ ] Confirm/add the **ECHO divider** so the P2 never sees 5 V.
 - [ ] Establish a single **common ground**.
 - [ ] Keep robot signals on **P0–P57**; leave **P58–P63** for flash/serial.
+
+---
+
+## License
+
+MIT License - See [LICENSE](../LICENSE) for details.
+
+---
+
+*Part of the Iron Sheep Productions Propeller 2 Projects Collection*
+
+---

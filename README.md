@@ -1,5 +1,10 @@
 # P2-vs-RPi-RobotDog-FNK0050
 
+![Project Status](https://img.shields.io/badge/status-in%20development-yellow)
+![Platform](https://img.shields.io/badge/platform-Propeller%202-blue)
+![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 <img src='DOCs/Picture/icon.png' width='50%' alt='Freenove FNK0050 Robot Dog (shown with the stock Raspberry Pi — to be replaced with the P2 board)'/>
 
 > *Shown with the stock Raspberry Pi on top — to be replaced with the P2 board.*
@@ -35,6 +40,9 @@ naturally onto a P2 smart pin. See the wiring map for the full breakdown.
 
 Start here when planning or executing the hardware swap:
 
+- **[`DOCs/HARDWARE_SETUP.md`](DOCs/HARDWARE_SETUP.md)** — photo walk-through of the
+  build: modeling/printing the adapter plate, assembling the P2 board onto it, and
+  mounting the assembly on the robot.
 - **[`DOCs/RPI_GPIO_USAGE.md`](DOCs/RPI_GPIO_USAGE.md)** — the stock Pi pin/bus
   usage, reverse-engineered from the Freenove server source (no schematic exists).
   Device inventory, I²C addresses, servo channel map, and which signals ride raw GPIO.
@@ -58,9 +66,17 @@ Start here when planning or executing the hardware swap:
 Early-stage. Documentation and mechanical/electrical planning are in place; the P2
 firmware in `src/` is under development.
 
+---
+
 ## License
 
-MIT — see [`LICENSE`](LICENSE). © 2026 Iron Sheep Productions, LLC.
+MIT License - See [LICENSE](LICENSE) for details. © 2026 Iron Sheep Productions, LLC.
 
 Note: the upstream Freenove reference material under `REF/` (git-ignored) is released
 by Freenove under CC BY-NC-SA 3.0 and is not covered by this repository's license.
+
+---
+
+*Part of the Iron Sheep Productions Propeller 2 Projects Collection*
+
+---
