@@ -1,0 +1,202 @@
+'' =================================================================================================
+''
+''   File....... isp_i2c_mpu6050.spin2
+''   Purpose.... TIER-2 chip driver: register-level access to the MPU6050 6-axis IMU via I2C
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Sits on the isp_i2c_singleton (TIER-1) bus master. Speaks the chip's vocabulary -- register
+   reads/writes and raw signed 16-bit accel/gyro counts. Physical units (g, deg/s) and attitude
+   live one tier up in isp_imu.
+
+   Robot Dog (FNK0050): MPU6050 @ 7-bit 0x68 on the shared I2C bus. Defaults match Freenove
+   IMU.py: accel +/-2g, gyro +/-250 deg/s. Accel/gyro registers are 16-bit big-endian and
+   contiguous, so each axis triple is read as one 6-byte burst.
+}
+
+CON ' ---- status codes ----
+  {Spin2_Doc_CON}
+  ' Operation results returned by start():
+  '  SUCCESS     - device present and configured
+  '  E_NO_DEVICE - no ACK at the expected I2C address
+  SUCCESS     = 0
+  E_NO_DEVICE = -1
+
+CON ' ---- I2C R/W direction ----
+  ' I2C read/write bit OR'd into the device address (matches isp_i2c_pca9685 convention):
+  '  MODE_WRITE - address the device for writing (R/W bit = 0)
+  '  MODE_READ  - address the device for reading (R/W bit = 1)
+  #0, MODE_WRITE, MODE_READ
+
+CON ' ---- MPU6050 device & registers ----
+  MPU6050_ADDR      = $D0           ' 7-bit 0x68, pre-shifted (0x68 << 1)
+  REG_PWR_MGMT_1    = $6B
+  REG_GYRO_CONFIG   = $1B
+  REG_ACCEL_CONFIG  = $1C
+  REG_ACCEL_XOUT_H  = $3B           ' accel X/Y/Z hi:lo, 6 contiguous bytes
+  REG_GYRO_XOUT_H   = $43           ' gyro  X/Y/Z hi:lo, 6 contiguous bytes
+  PWR_WAKE          = $00           ' clear SLEEP, internal 8 MHz oscillator
+  ACCEL_RANGE_2G    = $00           ' full-scale +/-2 g
+  GYRO_RANGE_250DPS = $00           ' full-scale +/-250 deg/s
+  BUS_FREQ_KHZ      = 400           ' MPU6050 supports up to 400 kHz
+  BYTE_SHIFT        = 8             ' high byte position when assembling a 16-bit word
+  SIGN_BIT_15       = 15            ' sign-extend a 16-bit value from bit 15
+
+OBJ
+
+  i2c_bus : "isp_i2c_singleton"                              ' TIER-1 low-level bus master
+  term    : "isp_serial_singleton"                           ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  bDeviceFound  BYTE  FALSE
+  bShowDebug    BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinSCL, pinSDA) : status
+'' Bring up the bus, confirm the MPU6050 answers, wake it, and set the default ranges.
+''
+'' @param pinSCL - I2C clock (SCL) pin number
+'' @param pinSDA - I2C data (SDA) pin number
+'' @returns status - SUCCESS, or E_NO_DEVICE if the chip did not ACK
+
+    i2c_bus.setup(pinSCL, pinSDA, BUS_FREQ_KHZ, i2c_bus.PU_NONE)
+    bDeviceFound := i2c_bus.present(MPU6050_ADDR | MODE_WRITE)
+    i2c_bus.stop()
+    status := E_NO_DEVICE
+    if bDeviceFound
+        writeReg(REG_PWR_MGMT_1, PWR_WAKE)                   ' wake from sleep
+        writeReg(REG_ACCEL_CONFIG, ACCEL_RANGE_2G)
+        writeReg(REG_GYRO_CONFIG, GYRO_RANGE_250DPS)
+        status := SUCCESS
+    if bShowDebug
+        term.fstr1(string("mpu- start() status=%d\r\n"), status)
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PUB isPresent() : bDevicePresent
+'' Return TRUE if the MPU6050 was detected at start().
+''
+'' @returns bDevicePresent - TRUE when the device ACKed its address
+
+    bDevicePresent := bDeviceFound
+
+PUB writeReg(regAddr, dataByte)
+'' Write one byte to an MPU6050 register.
+''
+'' @param regAddr - register address
+'' @param dataByte - value to write
+
+    i2c_bus.start()
+    i2c_bus.write(MPU6050_ADDR | MODE_WRITE)
+    i2c_bus.write(regAddr)
+    i2c_bus.write(dataByte)
+    i2c_bus.stop()
+
+PUB readReg(regAddr) : dataByte
+'' Read one byte from an MPU6050 register.
+''
+'' @param regAddr - register address
+'' @returns dataByte - the register's current value
+
+    i2c_bus.start()
+    i2c_bus.write(MPU6050_ADDR | MODE_WRITE)
+    i2c_bus.write(regAddr)
+    i2c_bus.start()
+    i2c_bus.write(MPU6050_ADDR | MODE_READ)
+    dataByte := i2c_bus.read(i2c_bus.NAK)
+    i2c_bus.stop()
+
+PUB readAccelRaw() : accelX, accelY, accelZ
+'' Read the three raw signed accelerometer axes (counts at the configured full scale).
+''
+'' @returns accelX - raw X-axis count (signed 16-bit)
+'' @returns accelY - raw Y-axis count (signed 16-bit)
+'' @returns accelZ - raw Z-axis count (signed 16-bit)
+
+    accelX, accelY, accelZ := readVector(REG_ACCEL_XOUT_H)
+
+PUB readGyroRaw() : gyroX, gyroY, gyroZ
+'' Read the three raw signed gyroscope axes (counts at the configured full scale).
+''
+'' @returns gyroX - raw X-axis count (signed 16-bit)
+'' @returns gyroY - raw Y-axis count (signed 16-bit)
+'' @returns gyroZ - raw Z-axis count (signed 16-bit)
+
+    gyroX, gyroY, gyroZ := readVector(REG_GYRO_XOUT_H)
+
+PRI readVector(regBase) : axis0, axis1, axis2 | hi0, lo0, hi1, lo1, hi2, lo2
+' Burst-read 6 bytes (three big-endian signed words) starting at regBase.
+'
+' @param regBase - first register of the contiguous 6-byte block
+' @returns axis0 - first axis (signed 16-bit)
+' @returns axis1 - second axis (signed 16-bit)
+' @returns axis2 - third axis (signed 16-bit)
+
+' Local Variables:
+' @local hi0 - high byte of axis 0
+' @local lo0 - low byte of axis 0
+' @local hi1 - high byte of axis 1
+' @local lo1 - low byte of axis 1
+' @local hi2 - high byte of axis 2
+' @local lo2 - low byte of axis 2
+
+    i2c_bus.start()
+    i2c_bus.write(MPU6050_ADDR | MODE_WRITE)
+    i2c_bus.write(regBase)
+    i2c_bus.start()
+    i2c_bus.write(MPU6050_ADDR | MODE_READ)
+    hi0 := i2c_bus.read(i2c_bus.ACK)
+    lo0 := i2c_bus.read(i2c_bus.ACK)
+    hi1 := i2c_bus.read(i2c_bus.ACK)
+    lo1 := i2c_bus.read(i2c_bus.ACK)
+    hi2 := i2c_bus.read(i2c_bus.ACK)
+    lo2 := i2c_bus.read(i2c_bus.NAK)
+    i2c_bus.stop()
+    axis0 := ((hi0 << BYTE_SHIFT) | lo0) signx SIGN_BIT_15
+    axis1 := ((hi1 << BYTE_SHIFT) | lo1) signx SIGN_BIT_15
+    axis2 := ((hi2 << BYTE_SHIFT) | lo2) signx SIGN_BIT_15
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

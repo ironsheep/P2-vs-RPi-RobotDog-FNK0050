@@ -1,0 +1,198 @@
+'' =================================================================================================
+''
+''   File....... isp_imu.spin2
+''   Purpose.... TIER-3 semantic driver: attitude/motion in physical units (milli-g, milli-deg/s, tilt)
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Sits on isp_i2c_mpu6050 (TIER-2 chip). Callers ask for acceleration in milli-g, rotation
+   rate in milli-deg/s, or a coarse accelerometer tilt -- never raw counts.
+
+   Robot Dog (FNK0050): defaults are +/-2g (16384 LSB/g) and +/-250 deg/s (131 LSB per deg/s),
+   matching Freenove IMU.py. calibrateGyro() captures the at-rest gyro bias the way Freenove's
+   average_filter() does.
+
+   tiltDegrees() is a coarse accelerometer-only tilt (good for "is the body level?"), not a
+   fused attitude. The Freenove Mahony+Kalman fusion (gyro+accel quaternion) is a separate,
+   larger numerical effort -- TODO, and to be validated on hardware.
+}
+
+CON ' ---- status codes ----
+  {Spin2_Doc_CON}
+  ' Operation results returned by start():
+  '  SUCCESS     - IMU present and configured
+  '  E_NO_DEVICE - the MPU6050 did not ACK
+  SUCCESS     = 0
+  E_NO_DEVICE = -1
+
+CON ' ---- scaling & calibration ----
+  ACCEL_LSB_PER_G    = 16384        ' +/-2g full scale: counts per g
+  GYRO_LSB_PER_DPS   = 131          ' +/-250 deg/s full scale: counts per deg/s
+  MILLI              = 1000         ' counts-to-milli-units multiplier
+  CALIBRATE_SAMPLES  = 100          ' at-rest gyro-bias averaging count (matches Freenove)
+  ' P2 CORDIC angle units: $1_0000_0000 = 360 deg, so units-per-degree = 2^32 / 360.
+  ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (precomputed; 2^32 will not fit in a CON)
+  DEGREES_PER_CIRCLE  = 360
+  HALF_CIRCLE_DEG     = 180
+
+OBJ
+
+  mpu  : "isp_i2c_mpu6050"                                   ' TIER-2 chip driver
+  term : "isp_serial_singleton"                              ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  gyroOffsetX  LONG  0                                        ' at-rest gyro bias (raw counts)
+  gyroOffsetY  LONG  0
+  gyroOffsetZ  LONG  0
+  bShowDebug   BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinSCL, pinSDA) : status
+'' Bring up the MPU6050 behind us.
+''
+'' @param pinSCL - I2C clock (SCL) pin number
+'' @param pinSDA - I2C data (SDA) pin number
+'' @returns status - SUCCESS, or E_NO_DEVICE if the MPU6050 did not ACK
+
+    status := (mpu.start(pinSCL, pinSDA) == mpu.SUCCESS) ? SUCCESS : E_NO_DEVICE
+    if bShowDebug
+        term.fstr1(string("imu- start() status=%d\r\n"), status)
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PUB calibrateGyro() | sampleIdx, sumGyroX, sumGyroY, sumGyroZ, gyroX, gyroY, gyroZ
+'' Capture the at-rest gyroscope bias (average of CALIBRATE_SAMPLES reads). Hold the robot still.
+''
+
+' Local Variables:
+' @local sampleIdx - averaging loop index
+' @local sumGyroX - running sum of raw gyro X
+' @local sumGyroY - running sum of raw gyro Y
+' @local sumGyroZ - running sum of raw gyro Z
+' @local gyroX - one raw gyro X sample
+' @local gyroY - one raw gyro Y sample
+' @local gyroZ - one raw gyro Z sample
+
+    sumGyroX := sumGyroY := sumGyroZ := 0
+    repeat sampleIdx from 0 to CALIBRATE_SAMPLES - 1
+        gyroX, gyroY, gyroZ := mpu.readGyroRaw()
+        sumGyroX += gyroX
+        sumGyroY += gyroY
+        sumGyroZ += gyroZ
+    gyroOffsetX := sumGyroX / CALIBRATE_SAMPLES
+    gyroOffsetY := sumGyroY / CALIBRATE_SAMPLES
+    gyroOffsetZ := sumGyroZ / CALIBRATE_SAMPLES
+    if bShowDebug
+        term.fstr3(string("imu- gyro bias x=%d y=%d z=%d\r\n"), gyroOffsetX, gyroOffsetY, gyroOffsetZ)
+
+PUB readAccelMilliG() : axMilliG, ayMilliG, azMilliG | accelX, accelY, accelZ
+'' Read acceleration on all three axes, in milli-g (1000 = 1 g).
+''
+'' @returns axMilliG - X acceleration, milli-g
+'' @returns ayMilliG - Y acceleration, milli-g
+'' @returns azMilliG - Z acceleration, milli-g
+
+' Local Variables:
+' @local accelX - raw X count
+' @local accelY - raw Y count
+' @local accelZ - raw Z count
+
+    accelX, accelY, accelZ := mpu.readAccelRaw()
+    axMilliG := accelX * MILLI / ACCEL_LSB_PER_G
+    ayMilliG := accelY * MILLI / ACCEL_LSB_PER_G
+    azMilliG := accelZ * MILLI / ACCEL_LSB_PER_G
+
+PUB readGyroMilliDPS() : gxMilliDPS, gyMilliDPS, gzMilliDPS | gyroX, gyroY, gyroZ
+'' Read rotation rate on all three axes, in milli-deg/s, with the calibrated bias removed.
+''
+'' @returns gxMilliDPS - X rotation rate, milli-deg/s
+'' @returns gyMilliDPS - Y rotation rate, milli-deg/s
+'' @returns gzMilliDPS - Z rotation rate, milli-deg/s
+
+' Local Variables:
+' @local gyroX - raw X count
+' @local gyroY - raw Y count
+' @local gyroZ - raw Z count
+
+    gyroX, gyroY, gyroZ := mpu.readGyroRaw()
+    gxMilliDPS := (gyroX - gyroOffsetX) * MILLI / GYRO_LSB_PER_DPS
+    gyMilliDPS := (gyroY - gyroOffsetY) * MILLI / GYRO_LSB_PER_DPS
+    gzMilliDPS := (gyroZ - gyroOffsetZ) * MILLI / GYRO_LSB_PER_DPS
+
+PUB tiltDegrees() : pitchDeg, rollDeg | accelX, accelY, accelZ
+'' Coarse accelerometer tilt (degrees): roll about X, pitch about Y, both relative to gravity.
+''
+'' @returns pitchDeg - pitch angle in degrees (forward/back tilt)
+'' @returns rollDeg - roll angle in degrees (left/right tilt)
+
+' Local Variables:
+' @local accelX - raw X count
+' @local accelY - raw Y count
+' @local accelZ - raw Z count
+
+    accelX, accelY, accelZ := mpu.readAccelRaw()
+    rollDeg := atan2Degrees(accelY, accelZ)                   ' angle of (az, ay)
+    pitchDeg := atan2Degrees(-accelX, accelZ)                 ' angle of (az, -ax)
+
+PRI atan2Degrees(yArg, xArg) : degrees | rho, theta
+' Signed atan2(yArg, xArg) in degrees [-180..180], via the P2 CORDIC (xypol).
+'
+' @param yArg - Cartesian Y component
+' @param xArg - Cartesian X component
+' @returns degrees - angle of the (xArg, yArg) vector, -180..180
+
+' Local Variables:
+' @local rho - vector magnitude (used to guard the zero-vector case)
+' @local theta - CORDIC angle in P2 angle units
+
+    degrees := 0
+    rho, theta := xypol(xArg, yArg)
+    if rho > 0
+        degrees := theta +/ ANGLE_UNITS_PER_DEG               ' unsigned divide -> 0..359
+        if degrees > HALF_CIRCLE_DEG
+            degrees -= DEGREES_PER_CIRCLE                      ' fold to -180..180
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

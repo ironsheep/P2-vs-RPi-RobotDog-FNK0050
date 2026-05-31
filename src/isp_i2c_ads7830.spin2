@@ -1,0 +1,171 @@
+'' =================================================================================================
+''
+''   File....... isp_i2c_ads7830.spin2
+''   Purpose.... TIER-2 chip driver: register-level access to the ADS7830 8-channel 8-bit ADC via I2C
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Sits on the isp_i2c_singleton (TIER-1) bus master. Speaks the chip's vocabulary -- raw
+   counts and per-pin millivolts. Battery semantics (divider, cutoff, median) live one tier
+   up in isp_battery_monitor.
+
+   Robot Dog (FNK0050): ADS7830 @ 7-bit 0x48 on the shared I2C bus. Channel 0 reads the
+   battery pack through a resistor divider. Command/decode mirrors Freenove ADS7830.py:
+     CMD = 0x84 | ((((ch<<2)|(ch>>1)) & 0x07) << 4)      ' single-ended, A/D on
+}
+
+CON ' ---- status codes ----
+  {Spin2_Doc_CON}
+  ' Operation results returned by start():
+  '  SUCCESS     - device present and bus configured
+  '  E_NO_DEVICE - no ACK at the expected I2C address
+  SUCCESS     = 0
+  E_NO_DEVICE = -1
+
+CON ' ---- I2C R/W direction ----
+  ' I2C read/write bit OR'd into the device address (matches isp_i2c_pca9685 convention):
+  '  MODE_WRITE - address the device for writing (R/W bit = 0)
+  '  MODE_READ  - address the device for reading (R/W bit = 1)
+  #0, MODE_WRITE, MODE_READ
+
+CON ' ---- ADS7830 device ----
+  ADS7830_ADDR          = $90       ' 7-bit 0x48, pre-shifted (0x48 << 1)
+  ADS7830_CMD_SE        = $84       ' single-ended inputs, A/D converter ON
+  ADS7830_CH_SEL_MASK   = $07       ' channel-select field width (3 bits)
+  ADS7830_CH_SEL_POS    = 4         ' channel-select field position in the command byte
+  ADC_FULL_SCALE_COUNTS = 255       ' 8-bit conversion full scale
+  NUM_CHANNELS          = 8
+  BUS_FREQ_KHZ          = 100       ' ADS7830 supports up to 400 kHz; 100 is conservative
+  ' Full-scale reference at the ADC pin, in millivolts. INFERRED from Freenove
+  ' ADS7830.py (data/255.0 * 5.0) -- verify the board's VREF source before trusting.
+  ADC_VREF_MV           = 5000
+
+OBJ
+
+  i2c_bus : "isp_i2c_singleton"                              ' TIER-1 low-level bus master
+  term    : "isp_serial_singleton"                           ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  bDeviceFound  BYTE  FALSE                                   ' TRUE once the device ACKs at start()
+  bShowDebug    BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinSCL, pinSDA) : status
+'' Bring up the I2C bus and confirm the ADS7830 answers on the bus.
+''
+'' @param pinSCL - I2C clock (SCL) pin number
+'' @param pinSDA - I2C data (SDA) pin number
+'' @returns status - SUCCESS, or E_NO_DEVICE if the chip did not ACK
+
+    i2c_bus.setup(pinSCL, pinSDA, BUS_FREQ_KHZ, i2c_bus.PU_NONE)
+    bDeviceFound := i2c_bus.present(ADS7830_ADDR | MODE_WRITE)
+    i2c_bus.stop()                                            ' leave bus in a stable state
+    status := (bDeviceFound) ? SUCCESS : E_NO_DEVICE
+    if bShowDebug
+        term.fstr1(string("ads- start() status=%d\r\n"), status)
+
+PUB stop()
+'' Release the I2C bus (pins float).
+''
+
+    i2c_bus.stop()
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PUB isPresent() : bDevicePresent
+'' Return TRUE if the ADS7830 was detected at start().
+''
+'' @returns bDevicePresent - TRUE when the device ACKed its address
+
+    bDevicePresent := bDeviceFound
+
+PUB readChannelRaw(channel) : raw8 | cmd
+'' Read one single-ended channel, returning the raw 8-bit count [0..255].
+''
+'' @param channel - logical input 0..7 (decoded to the ADS7830's interleaved channel bits)
+'' @returns raw8 - raw conversion count [0..255]
+
+' Local Variables:
+' @local cmd - ADS7830 command byte (channel-select field + single-ended/power mode)
+
+    channel := 0 #> channel <# (NUM_CHANNELS - 1)             ' legal channel
+    ' ADS7830 single-ended channel order is interleaved: the (ch<<2 | ch>>1) shuffle
+    ' produces the datasheet's C2..C0 bit pattern before it is placed in the select field.
+    cmd := ADS7830_CMD_SE | ((((channel << 2) | (channel >> 1)) & ADS7830_CH_SEL_MASK) << ADS7830_CH_SEL_POS)
+
+    ' transaction 1: latch the command (selects channel, starts conversion)
+    i2c_bus.start()
+    i2c_bus.write(ADS7830_ADDR | MODE_WRITE)
+    i2c_bus.write(cmd)
+    i2c_bus.stop()
+
+    ' transaction 2: read the conversion result (single byte, NAK terminates)
+    i2c_bus.start()
+    i2c_bus.write(ADS7830_ADDR | MODE_READ)
+    raw8 := i2c_bus.read(i2c_bus.NAK)
+    i2c_bus.stop()
+
+    if bShowDebug
+        term.fstr3(string("ads- readChannelRaw(ch%d) cmd=0x%.02x -> %d\r\n"), channel, cmd, raw8)
+
+PUB rawToMillivolts(raw8) : milliVolts
+'' Convert a raw ADS7830 count to the voltage present AT THE ADC PIN, in millivolts.
+'' Does NOT account for any external divider; that scaling belongs to the caller (TIER-3).
+''
+'' @param raw8 - raw conversion count [0..255]
+'' @returns milliVolts - voltage at the ADC input pin
+
+    milliVolts := raw8 * ADC_VREF_MV / ADC_FULL_SCALE_COUNTS
+
+PUB readChannelMillivolts(channel) : milliVolts
+'' Read one channel as the voltage present at the ADC pin, in millivolts.
+''
+'' @param channel - logical input 0..7
+'' @returns milliVolts - voltage at the ADC input pin
+
+    milliVolts := rawToMillivolts(readChannelRaw(channel))
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

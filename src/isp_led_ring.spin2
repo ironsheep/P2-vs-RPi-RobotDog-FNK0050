@@ -1,0 +1,195 @@
+'' =================================================================================================
+''
+''   File....... isp_led_ring.spin2
+''   Purpose.... TIER-3 LED ring driver: display modes/effects for the whole WS2812 pixel ring
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Sits on isp_ws2812 (the dumb strip: per-pixel buffer + transmit). This object owns the
+   display vocabulary -- modes and effects across the entire ring -- and gets the pixel count
+   from the strip. It maps Freenove's CMD_LED (solid color) and CMD_LED_MOD (animated modes:
+   wipe, theater chase, rainbow, rainbow-cycle) onto the strip.
+
+   Animations are STEPPED: set a mode, then call step() once per frame (e.g. from the frontend
+   cog's loop). step() never blocks -- it advances one frame and latches. See
+   DOCs/P2_FIRMWARE_THEORY_OF_OPS.md.
+}
+
+CON ' ---- display modes ----
+  {Spin2_Doc_CON}
+  ' Ring display modes (set with setMode):
+  '  MODE_OFF           - all pixels dark
+  '  MODE_SOLID         - all pixels the current color
+  '  MODE_WIPE          - current color wipes across, then repeats
+  '  MODE_CHASE         - theater-chase of the current color
+  '  MODE_RAINBOW       - rainbow that scrolls across all pixels
+  '  MODE_RAINBOW_CYCLE - rainbow distributed across the ring, rotating
+  #0, MODE_OFF, MODE_SOLID, MODE_WIPE, MODE_CHASE, MODE_RAINBOW, MODE_RAINBOW_CYCLE
+
+CON ' ---- color-wheel & chase ----
+  COLOR_WHEEL_SPAN = 256            ' rainbow wheel positions
+  COLOR_WHEEL_MASK = 255            ' wrap a wheel position to 0..255
+  WHEEL_SEGMENT    = 85             ' wheel span / 3 color segments
+  WHEEL_SLOPE      = 3              ' intensity ramp per wheel step (~255/85)
+  COLOR_MAX        = 255
+  CHASE_SPACING    = 3              ' every 3rd pixel lit in theater chase
+
+OBJ
+
+  strip : "isp_ws2812"                                       ' TIER-1+2 dumb strip
+  term  : "isp_serial_singleton"                             ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  currentMode   LONG  MODE_OFF
+  currentColor  LONG  0                                       ' packed $RRGGBB for solid modes
+  animPhase     LONG  0                                       ' animation frame counter (0..255)
+  wipeIndex     LONG  0                                       ' next pixel for MODE_WIPE
+  bShowDebug    BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinNumber)
+'' Bring up the strip and start in the OFF mode.
+''
+'' @param pinNumber - P2 pin driving the WS2812 data line
+
+    strip.start(pinNumber)
+    currentColor := strip.BLACK
+    currentMode := MODE_OFF
+    animPhase := 0
+    wipeIndex := 0
+
+PUB setMode(modeId)
+'' Select a display mode and restart its animation state.
+''
+'' @param modeId - one of MODE_OFF..MODE_RAINBOW_CYCLE
+
+    currentMode := MODE_OFF #> modeId <# MODE_RAINBOW_CYCLE
+    animPhase := 0
+    wipeIndex := 0
+
+PUB setColor(rgb)
+'' Set the color used by the solid/wipe/chase modes.
+''
+'' @param rgb - packed color, $RRGGBB (use the strip's named-color constants)
+
+    currentColor := rgb
+
+PUB setBrightness(level)
+'' Set master brightness [0..255] on the underlying strip.
+''
+'' @param level - brightness [0..255]
+
+    strip.setBrightness(level)
+
+PUB update() | pixelIdx, red, grn, blu
+'' Advance the current mode by one animation frame and latch the ring. Non-blocking.
+''
+
+' Local Variables:
+' @local pixelIdx - pixel loop index
+' @local red - red channel from the color wheel
+' @local grn - green channel from the color wheel
+' @local blu - blue channel from the color wheel
+
+    case currentMode
+        MODE_OFF:
+            strip.clear()
+            strip.show()
+        MODE_SOLID:
+            strip.fill(currentColor)
+            strip.show()
+        MODE_WIPE:
+            strip.setPixelPacked(wipeIndex, currentColor)
+            strip.show()
+            wipeIndex++
+            if wipeIndex >= strip.NUM_PIXELS
+                wipeIndex := 0
+                strip.clear()
+        MODE_CHASE:
+            strip.clear()
+            repeat pixelIdx from 0 to strip.NUM_PIXELS - 1
+                if ((pixelIdx + animPhase) // CHASE_SPACING) == 0
+                    strip.setPixelPacked(pixelIdx, currentColor)
+            strip.show()
+        MODE_RAINBOW:
+            repeat pixelIdx from 0 to strip.NUM_PIXELS - 1
+                red, grn, blu := wheel(pixelIdx + animPhase)
+                strip.setPixelColor(pixelIdx, red, grn, blu)
+            strip.show()
+        MODE_RAINBOW_CYCLE:
+            repeat pixelIdx from 0 to strip.NUM_PIXELS - 1
+                red, grn, blu := wheel((pixelIdx * COLOR_WHEEL_SPAN / strip.NUM_PIXELS) + animPhase)
+                strip.setPixelColor(pixelIdx, red, grn, blu)
+            strip.show()
+    animPhase := (animPhase + 1) & COLOR_WHEEL_MASK
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PRI wheel(wheelPos) : red, grn, blu
+' Map a wheel position 0..255 to an R/G/B color spanning the spectrum (per Freenove Led.wheel).
+'
+' @param wheelPos - wheel position (wrapped to 0..255)
+' @returns red - red channel 0..255
+' @returns grn - green channel 0..255
+' @returns blu - blue channel 0..255
+
+    wheelPos := wheelPos & COLOR_WHEEL_MASK
+    red := 0
+    grn := 0
+    blu := 0
+    if wheelPos < WHEEL_SEGMENT
+        red := wheelPos * WHEEL_SLOPE
+        grn := COLOR_MAX - wheelPos * WHEEL_SLOPE
+    elseif wheelPos < (WHEEL_SEGMENT * 2)
+        wheelPos -= WHEEL_SEGMENT
+        red := COLOR_MAX - wheelPos * WHEEL_SLOPE
+        blu := wheelPos * WHEEL_SLOPE
+    else
+        wheelPos -= (WHEEL_SEGMENT * 2)
+        grn := wheelPos * WHEEL_SLOPE
+        blu := COLOR_MAX - wheelPos * WHEEL_SLOPE
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

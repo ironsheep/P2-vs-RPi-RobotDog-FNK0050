@@ -1,0 +1,106 @@
+'' =================================================================================================
+''
+''   File....... isp_buzzer.spin2
+''   Purpose.... Active buzzer driver (simple on/off + timed beep) on a single P2 pin
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Robot Dog (FNK0050): the buzzer is an ACTIVE buzzer (Freenove Buzzer.py just toggles the
+   GPIO -- it has its own oscillator), wired to P2 pin P10 (robo hdr 11). No tone frequency
+   is needed; driving the pin high makes sound. A discrete pin, not on the I2C bus.
+}
+
+OBJ
+
+  term : "isp_serial_singleton"                              ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  buzzerPin   LONG  -1
+  bSounding   BYTE  FALSE
+  bShowDebug  BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinNumber)
+'' Configure the buzzer pin and silence it.
+''
+'' @param pinNumber - P2 pin driving the active buzzer
+
+    buzzerPin := pinNumber
+    off()
+
+PUB on()
+'' Turn the buzzer on (continuous tone until off()).
+''
+
+    pinh(buzzerPin)
+    bSounding := TRUE
+
+PUB off()
+'' Silence the buzzer.
+''
+
+    pinl(buzzerPin)
+    bSounding := FALSE
+
+PUB beep(durationMs)
+'' Sound the buzzer for a fixed time, then silence it (blocking).
+''
+'' @param durationMs - how long to sound, in milliseconds
+
+    on()
+    waitms(durationMs)
+    off()
+
+PUB isSounding() : bActive
+'' Return TRUE while the buzzer is currently on.
+''
+'' @returns bActive - TRUE if the buzzer is sounding
+
+    bActive := bSounding
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

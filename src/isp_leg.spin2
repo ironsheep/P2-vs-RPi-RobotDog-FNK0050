@@ -1,0 +1,272 @@
+'' =================================================================================================
+''
+''   File....... isp_leg.spin2
+''   Purpose.... TIER-3 leg driver: one 3-joint leg (coxa/femur/tibia) in joint angles or foot XYZ
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   A leg is created with its body position -- init(side, end) -- and derives its three PCA9685
+   servo channels and its joint-angle mirror from that identity. The PCA9685 controller must
+   already be started/configured by the owner (isp_robot_dog) before any move drives hardware.
+
+   Channel map (INFERRED from Freenove Control.run(); verify on hardware):
+     FL Left/Front : coxa 4, femur 3, tibia 2      BL Left/Back : coxa 7, femur 6, tibia 5
+     FR Right/Front: coxa 11, femur 12, tibia 13    BR Right/Back: coxa 8, femur 9, tibia 10
+   Side owns the mirror: Left  servo angles = [a, 90-b, c]
+                         Right servo angles = [a, 90+b, 180-c]
+
+   moveToXYZ() is the inverse kinematics translated from Freenove Control.coordinateToAngle()
+   using the P2 CORDIC (xypol) and the ^^ integer square root. Link lengths l1/l2/l3 below.
+   The fixed-point scaling and quadrant handling are INFERRED -- VERIFY on hardware. Outputs are
+   clamped to legal servo angles, so a scaling error is safe (it cannot exceed the servo range).
+}
+
+CON ' ---- leg identity ----
+  {Spin2_Doc_CON}
+  ' Body side (selects the joint-angle mirror):
+  #0, SIDE_LEFT, SIDE_RIGHT
+  ' Body end (selects channel block & gait phase):
+  #0, END_FRONT, END_BACK
+
+CON ' ---- per-leg PCA9685 channels (INFERRED from Freenove; verify) ----
+  CH_FL_COXA = 4
+  CH_FL_FEMUR = 3
+  CH_FL_TIBIA = 2
+  CH_BL_COXA = 7
+  CH_BL_FEMUR = 6
+  CH_BL_TIBIA = 5
+  CH_BR_COXA = 8
+  CH_BR_FEMUR = 9
+  CH_BR_TIBIA = 10
+  CH_FR_COXA = 11
+  CH_FR_FEMUR = 12
+  CH_FR_TIBIA = 13
+
+CON ' ---- joint geometry & IK ----
+  SERVO_MIN_DEG    = 0
+  SERVO_MAX_DEG    = 180
+  FEMUR_MIRROR_DEG = 90             ' Left: 90-b   Right: 90+b
+  TIBIA_MIRROR_DEG = 180            ' Right: 180-c
+  LINK1_COXA_MM    = 23             ' l1 (Freenove)
+  LINK2_FEMUR_MM   = 55             ' l2
+  LINK3_TIBIA_MM   = 55             ' l3
+  ' P2 CORDIC angle units: $4000_0000 = 90 deg, $8000_0000 = 180 deg.
+  HALF_PI_UNITS       = $4000_0000
+  PI_UNITS            = $8000_0000
+  ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (precomputed; 2^32 does not fit a CON)
+  DEGREES_PER_CIRCLE  = 360
+  HALF_CIRCLE_DEG     = 180
+
+OBJ
+
+  coxaServo  : "isp_i2c_pca9685_servo"                       ' the three leg servos (TIER-3 seed)
+  femurServo : "isp_i2c_pca9685_servo"
+  tibiaServo : "isp_i2c_pca9685_servo"
+  term       : "isp_serial_singleton"                        ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  bLeftSide      BYTE  FALSE
+  bShowDebug     BYTE  FALSE
+  coxaName       BYTE  "coxa", 0
+  femurName      BYTE  "femr", 0
+  tibiaName      BYTE  "tiba", 0
+
+DAT ' ---- per-joint calibration offsets (degrees) ----
+
+  calOffsetCoxa   LONG  0
+  calOffsetFemur  LONG  0
+  calOffsetTibia  LONG  0
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB init(side, ending)
+'' Configure this leg for a body position; assigns its three servo channels.
+''
+'' @param side - SIDE_LEFT or SIDE_RIGHT (selects the joint-angle mirror)
+'' @param ending - END_FRONT or END_BACK (selects the channel block)
+
+    bLeftSide := (side == SIDE_LEFT)
+    if bLeftSide
+        if ending == END_FRONT
+            initServos(CH_FL_COXA, CH_FL_FEMUR, CH_FL_TIBIA)
+        else
+            initServos(CH_BL_COXA, CH_BL_FEMUR, CH_BL_TIBIA)
+    else
+        if ending == END_FRONT
+            initServos(CH_FR_COXA, CH_FR_FEMUR, CH_FR_TIBIA)
+        else
+            initServos(CH_BR_COXA, CH_BR_FEMUR, CH_BR_TIBIA)
+
+PUB setCalibration(coxaOffsetDeg, femurOffsetDeg, tibiaOffsetDeg)
+'' Set per-joint trim offsets (degrees) added to each servo angle before clamping.
+''
+'' @param coxaOffsetDeg - coxa trim, degrees
+'' @param femurOffsetDeg - femur trim, degrees
+'' @param tibiaOffsetDeg - tibia trim, degrees
+
+    calOffsetCoxa := coxaOffsetDeg
+    calOffsetFemur := femurOffsetDeg
+    calOffsetTibia := tibiaOffsetDeg
+
+PUB setJointAngles(coxaDeg, femurDeg, tibiaDeg) | servoCoxa, servoFemur, servoTibia
+'' Drive the three joints from IK-frame angles, applying the side mirror, trims, and clamps.
+''
+'' @param coxaDeg - coxa (a) angle, IK frame
+'' @param femurDeg - femur (b) angle, IK frame
+'' @param tibiaDeg - tibia (c) angle, IK frame
+
+' Local Variables:
+' @local servoCoxa - physical coxa servo angle
+' @local servoFemur - physical femur servo angle
+' @local servoTibia - physical tibia servo angle
+
+    servoCoxa := coxaDeg
+    if bLeftSide
+        servoFemur := FEMUR_MIRROR_DEG - femurDeg
+        servoTibia := tibiaDeg
+    else
+        servoFemur := FEMUR_MIRROR_DEG + femurDeg
+        servoTibia := TIBIA_MIRROR_DEG - tibiaDeg
+
+    servoCoxa += calOffsetCoxa
+    servoFemur += calOffsetFemur
+    servoTibia += calOffsetTibia
+
+    coxaServo.writePosition(coxaServo.M_ANGLE,  SERVO_MIN_DEG #> servoCoxa  <# SERVO_MAX_DEG)
+    femurServo.writePosition(femurServo.M_ANGLE, SERVO_MIN_DEG #> servoFemur <# SERVO_MAX_DEG)
+    tibiaServo.writePosition(tibiaServo.M_ANGLE, SERVO_MIN_DEG #> servoTibia <# SERVO_MAX_DEG)
+
+PUB moveToXYZ(footX, footY, footZ) | thetaZY, aUnits, x4, x5, l23, adjB, bAsinUnits, numV, denV, oppV, acosVUnits, bUnits, numC, denC, oppC, acosCUnits, cUnits
+'' Place the foot at (x, y, z) mm via inverse kinematics, then drive the joints.
+''
+'' @param footX - foot X target, mm
+'' @param footY - foot Y target, mm
+'' @param footZ - foot Z target, mm
+
+' Local Variables:
+' @local thetaZY - CORDIC angle of (y, z) = atan2(z, y)
+' @local aUnits - coxa angle, P2 units
+' @local x4 - l1 * sin(a)
+' @local x5 - l1 * cos(a)
+' @local l23 - distance from joint 2 to the foot
+' @local adjB - sqrt(l23^2 - x^2), adjacent for the asin term
+' @local bAsinUnits - asin(x / l23), P2 units
+' @local numV - numerator of the femur law-of-cosines term
+' @local denV - denominator of the femur law-of-cosines term
+' @local oppV - sqrt(denV^2 - numV^2)
+' @local acosVUnits - acos(numV / denV), P2 units
+' @local bUnits - femur angle, P2 units
+' @local numC - numerator of the tibia law-of-cosines term
+' @local denC - denominator of the tibia law-of-cosines term
+' @local oppC - sqrt(denC^2 - numC^2)
+' @local acosCUnits - acos(numC / denC), P2 units
+' @local cUnits - tibia angle, P2 units
+
+    ' a = pi/2 - atan2(z, y)
+    thetaZY := cordicAngleUnits(footZ, footY)
+    aUnits := HALF_PI_UNITS - thetaZY
+
+    ' x4 = l1*sin(a), x5 = l1*cos(a); l23 = |foot - joint2|
+    x4 := qsin(LINK1_COXA_MM, aUnits, 0)                     ' qsin(length, angle, twopi=0 -> 2^32)
+    x5 := qcos(LINK1_COXA_MM, aUnits, 0)
+    l23 := sqrt( ((footZ - x5) * (footZ - x5)) + ((footY - x4) * (footY - x4)) + (footX * footX) )
+    l23 := 1 #> l23                                          ' avoid divide/degenerate at zero
+
+    ' b = asin(x / l23) - acos((l2^2 + l23^2 - l3^2) / (2*l2*l23))
+    adjB := sqrt( ((l23 * l23) - (footX * footX)) #> 0 )
+    bAsinUnits := cordicAngleUnits(footX, adjB)
+    numV := (LINK2_FEMUR_MM * LINK2_FEMUR_MM) + (l23 * l23) - (LINK3_TIBIA_MM * LINK3_TIBIA_MM)
+    denV := 2 * LINK2_FEMUR_MM * l23
+    oppV := sqrt( ((denV * denV) - (numV * numV)) #> 0 )
+    acosVUnits := cordicAngleUnits(oppV, numV)
+    bUnits := bAsinUnits - acosVUnits
+
+    ' c = pi - acos((l2^2 + l3^2 - l23^2) / (2*l3*l2))
+    numC := (LINK2_FEMUR_MM * LINK2_FEMUR_MM) + (LINK3_TIBIA_MM * LINK3_TIBIA_MM) - (l23 * l23)
+    denC := 2 * LINK3_TIBIA_MM * LINK2_FEMUR_MM
+    oppC := sqrt( ((denC * denC) - (numC * numC)) #> 0 )
+    acosCUnits := cordicAngleUnits(oppC, numC)
+    cUnits := PI_UNITS - acosCUnits
+
+    setJointAngles(unitsToDegrees(aUnits), unitsToDegrees(bUnits), unitsToDegrees(cUnits))
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PRI initServos(coxaCh, femurCh, tibiaCh)
+' Assign the three servo channels for this leg (no motion yet).
+'
+' @param coxaCh - PCA9685 channel for the coxa joint
+' @param femurCh - PCA9685 channel for the femur joint
+' @param tibiaCh - PCA9685 channel for the tibia joint
+
+    coxaServo.init(coxaCh, coxaServo.M_NOT_SET, 0, @coxaName)
+    femurServo.init(femurCh, femurServo.M_NOT_SET, 0, @femurName)
+    tibiaServo.init(tibiaCh, tibiaServo.M_NOT_SET, 0, @tibiaName)
+
+PRI cordicAngleUnits(yArg, xArg) : angleUnits | rho
+' atan2(yArg, xArg) in P2 CORDIC angle units, via xypol.
+'
+' @param yArg - Cartesian Y component
+' @param xArg - Cartesian X component
+' @returns angleUnits - angle of the (xArg, yArg) vector in P2 units
+
+' Local Variables:
+' @local rho - vector magnitude (guards the zero-vector case)
+
+    rho, angleUnits := xypol(xArg, yArg)
+    if rho == 0
+        angleUnits := 0
+
+PRI unitsToDegrees(angleUnits) : degrees
+' Convert a (possibly wrapped/signed) P2 angle to degrees in -180..180.
+'
+' @param angleUnits - angle in P2 units
+' @returns degrees - angle in degrees, -180..180
+
+    degrees := angleUnits +/ ANGLE_UNITS_PER_DEG            ' unsigned divide -> 0..359 (wrapped)
+    if degrees > HALF_CIRCLE_DEG
+        degrees -= DEGREES_PER_CIRCLE
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

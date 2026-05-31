@@ -233,3 +233,10 @@ REF/
 .bashrc
 .mcp.json
 .vscode/
+
+# P2 build artifacts (pnut-ts / pnut-term-ts)
+*.bin
+*.lst
+*.obj
+*.flash
+.pnut-cache/

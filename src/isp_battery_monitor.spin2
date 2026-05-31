@@ -1,0 +1,144 @@
+'' =================================================================================================
+''
+''   File....... isp_battery_monitor.spin2
+''   Purpose.... TIER-3 semantic driver: the robot's battery, expressed in volts and a low-battery flag
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Sits on isp_i2c_ads7830 (TIER-2 chip) which sits on isp_i2c_singleton (TIER-1 bus). The
+   caller asks "how many volts?" / "is it low?" -- never about ADC counts or channels.
+
+   Robot Dog (FNK0050): the pack feeds ADS7830 channel 0 through a half-scale resistor
+   divider, so true pack voltage = (pin voltage) x DIVIDER_RATIO. Freenove samples 9x and
+   uses the MEDIAN to reject switching noise, then shuts the dog down below 6.4 V
+   (Server.battery_reminder). DIVIDER_RATIO (x2) is INFERRED from Freenove ADS7830.py
+   (* 5.0 * 2) -- meter before trusting.
+}
+
+CON ' ---- status codes ----
+  {Spin2_Doc_CON}
+  ' Operation results returned by start():
+  '  SUCCESS     - ADC present and bus configured
+  '  E_NO_DEVICE - the ADS7830 did not ACK
+  SUCCESS     = 0
+  E_NO_DEVICE = -1
+
+CON ' ---- battery sensing ----
+  BATTERY_CHANNEL        = 0        ' ADS7830 input wired to the pack divider
+  DIVIDER_RATIO          = 2        ' pack = pin x 2 (half-scale divider) -- INFERRED
+  LOW_BATTERY_CUTOFF_MV  = 6400     ' below this is low (Freenove auto-shutdown < 6.4 V)
+  SAMPLE_COUNT           = 9        ' odd count so the median is a real sample
+  MEDIAN_INDEX           = SAMPLE_COUNT / 2
+  MV_PER_TENTH_VOLT      = 100      ' 100 mV per 0.1 V
+
+OBJ
+
+  adc  : "isp_i2c_ads7830"                                    ' TIER-2 chip driver
+  term : "isp_serial_singleton"                              ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  rawSamples  LONG  0[SAMPLE_COUNT]
+  bShowDebug  BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinSCL, pinSDA) : status
+'' Bring up the ADC behind us and confirm the battery sensor is present.
+''
+'' @param pinSCL - I2C clock (SCL) pin number
+'' @param pinSDA - I2C data (SDA) pin number
+'' @returns status - SUCCESS, or E_NO_DEVICE if the ADS7830 did not ACK
+
+    status := (adc.start(pinSCL, pinSDA) == adc.SUCCESS) ? SUCCESS : E_NO_DEVICE
+    if bShowDebug
+        term.fstr1(string("batt- start() status=%d\r\n"), status)
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PUB batteryMilliVolts() : milliVolts | sampleIdx, sortIdx, scanIdx, sampleVal, median
+'' Return the pack voltage in millivolts (median of SAMPLE_COUNT reads, divider undone).
+''
+'' @returns milliVolts - pack voltage in millivolts
+
+' Local Variables:
+' @local sampleIdx - index while collecting raw samples
+' @local sortIdx - outer index of the insertion sort
+' @local scanIdx - inner index of the insertion sort
+' @local sampleVal - the sample being inserted during the sort
+' @local median - the middle (median) raw sample
+
+    repeat sampleIdx from 0 to SAMPLE_COUNT - 1
+        rawSamples[sampleIdx] := adc.readChannelRaw(BATTERY_CHANNEL)
+
+    ' insertion sort so we can pick the middle (median) sample
+    repeat sortIdx from 1 to SAMPLE_COUNT - 1
+        sampleVal := rawSamples[sortIdx]
+        scanIdx := sortIdx
+        repeat while (scanIdx > 0) and (rawSamples[scanIdx - 1] > sampleVal)
+            rawSamples[scanIdx] := rawSamples[scanIdx - 1]
+            scanIdx--
+        rawSamples[scanIdx] := sampleVal
+
+    median := rawSamples[MEDIAN_INDEX]
+    ' counts -> pin millivolts (the adc owns VREF/full-scale) -> pack millivolts (undo divider)
+    milliVolts := adc.rawToMillivolts(median) * DIVIDER_RATIO
+    if bShowDebug
+        term.fstr2(string("batt- median=%d -> %d mV\r\n"), median, milliVolts)
+
+PUB batteryVoltsTenths() : voltsX10
+'' Return pack voltage as volts x 10 (e.g. 74 = 7.4 V) -- handy for whole-number display.
+''
+'' @returns voltsX10 - pack voltage in tenths of a volt
+
+    voltsX10 := batteryMilliVolts() / MV_PER_TENTH_VOLT
+
+PUB isLowBattery() : bLow
+'' Return TRUE when the pack has fallen below the safe-operating cutoff.
+''
+'' @returns bLow - TRUE if pack voltage is below LOW_BATTERY_CUTOFF_MV
+
+    bLow := batteryMilliVolts() < LOW_BATTERY_CUTOFF_MV
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

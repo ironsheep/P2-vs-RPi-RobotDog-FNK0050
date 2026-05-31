@@ -1,0 +1,154 @@
+'' =================================================================================================
+''
+''   File....... isp_hcsr04.spin2
+''   Purpose.... HC-SR04 ultrasonic range finder: trigger a ping, time the echo, report distance
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Robot Dog (FNK0050): HC-SR04 on P2 pins -- TRIG = P9 (robo hdr 13), ECHO = P8 (robo hdr 15).
+   A 10 us TRIG pulse launches a burst; ECHO stays high for the round-trip time. Distance is
+   echo_time / 58 us-per-cm (speed of sound). Discrete pins, not on the I2C bus -- this object
+   is meant to run in its own cog as a producer (see DOCs/P2_FIRMWARE_THEORY_OF_OPS.md).
+
+   GOTCHA: HC-SR04 ECHO is a 5 V output. It MUST be divided to <= 3.3 V before reaching the P2
+   pin (the P2 is not 5 V tolerant). See DOCs/P2_MIGRATION_WIRING.md.
+
+   This draft polls the ECHO pin with getct() timing. A P2 smart-pin pulse-width measurement
+   is the production upgrade; the polled version is deterministic enough in a dedicated cog.
+}
+
+CON ' ---- pulse timing & conversion ----
+  TRIG_SETTLE_US  = 2               ' ensure TRIG is low before the pulse
+  TRIG_PULSE_US   = 10              ' HC-SR04 trigger pulse width
+  ECHO_TIMEOUT_US = 25_000          ' ~4.3 m round trip ceiling; no-echo guard
+  US_PER_CM       = 58              ' round-trip microseconds per centimeter (speed of sound)
+  MM_PER_CM       = 10
+  US_PER_SEC      = 1_000_000
+  NO_ECHO         = -1              ' returned when no echo arrives before timeout
+
+OBJ
+
+  term : "isp_serial_singleton"                              ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  trigPin     LONG  -1
+  echoPin     LONG  -1
+  bShowDebug  BYTE  FALSE
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinTRIG, pinECHO)
+'' Configure the trigger and echo pins and idle the trigger low.
+''
+'' @param pinTRIG - P2 pin driving the HC-SR04 TRIG input
+'' @param pinECHO - P2 pin reading the (level-shifted) HC-SR04 ECHO output
+
+    trigPin := pinTRIG
+    echoPin := pinECHO
+    pinl(trigPin)
+    pinclear(echoPin)                                         ' plain input
+
+PUB readDistanceMm() : distanceMm | ticksPerUs, deadline, riseTicks, echoUs, bEdgeSeen
+'' Fire one ping and return the measured distance in millimeters.
+''
+'' @returns distanceMm - distance in mm, or NO_ECHO if no echo arrived before timeout
+
+' Local Variables:
+' @local ticksPerUs - system clock ticks per microsecond
+' @local deadline - getct() value at which the current wait gives up
+' @local riseTicks - getct() captured at the ECHO rising edge
+' @local echoUs - measured ECHO high time in microseconds
+' @local bEdgeSeen - TRUE when the awaited ECHO edge arrived before timeout
+
+    distanceMm := NO_ECHO
+    ticksPerUs := clkfreq / US_PER_SEC
+
+    ' launch the burst: a clean 10 us TRIG pulse
+    pinl(trigPin)
+    waitus(TRIG_SETTLE_US)
+    pinh(trigPin)
+    waitus(TRIG_PULSE_US)
+    pinl(trigPin)
+
+    ' wait for ECHO to go high (start of round-trip window)
+    bEdgeSeen := FALSE
+    deadline := getct() + (ECHO_TIMEOUT_US * ticksPerUs)
+    repeat
+        if pinr(echoPin) <> 0
+            bEdgeSeen := TRUE
+            quit
+        if (getct() - deadline) > 0
+            quit
+
+    if bEdgeSeen
+        riseTicks := getct()
+        ' wait for ECHO to go low (end of round-trip window)
+        bEdgeSeen := FALSE
+        deadline := getct() + (ECHO_TIMEOUT_US * ticksPerUs)
+        repeat
+            if pinr(echoPin) == 0
+                bEdgeSeen := TRUE
+                quit
+            if (getct() - deadline) > 0
+                quit
+        if bEdgeSeen
+            echoUs := (getct() - riseTicks) / ticksPerUs
+            distanceMm := echoUs * MM_PER_CM / US_PER_CM
+
+    if bShowDebug
+        term.fstr1(string("sonic- distanceMm=%d\r\n"), distanceMm)
+
+PUB readDistanceCm() : distanceCm
+'' Fire one ping and return the measured distance in centimeters.
+''
+'' @returns distanceCm - distance in cm, or NO_ECHO if no echo arrived before timeout
+
+    distanceCm := readDistanceMm()
+    if distanceCm <> NO_ECHO
+        distanceCm := distanceCm / MM_PER_CM
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

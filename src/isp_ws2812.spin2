@@ -1,0 +1,231 @@
+'' =================================================================================================
+''
+''   File....... isp_ws2812.spin2
+''   Purpose.... WS2812 (NeoPixel) RGB strip driver -- transport + pixel buffer (the "dumb strip")
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Two internal layers (like isp_serial_singleton keeps low/high in one file):
+     TIER-1 transport -- streamBuffer(): inline PASM2 bit-banger, the only hardware code
+     TIER-2 framing   -- brightness scaling + GRB wire packing into the pixel buffer
+   Display modes/effects live one tier up in isp_led_ring. WS2812 is a single discrete data
+   line (no I2C), so there is no shared bus singleton.
+
+   Robot Dog (FNK0050), PCB v1.0: 7-pixel WS2812 strip on P2 pin P11 (robo hdr 12). GOTCHA:
+   the P2 drives 3.3 V data into a 5 V part -- usually works but out of spec; a level shifter
+   on the data line is the robust fix (see DOCs/P2_MIGRATION_WIRING.md).
+
+   Bit timing matches REF jm_rgbx_pixel (start_2812b = 400/800 ns high, fixed 1.25 us CT-paced
+   cell). Confirm the dog's strip is WS2812B (vs plain WS2812 = 350/700 ns) on the bench.
+}
+
+CON ' ---- strip geometry & bit timing ----
+  NUM_PIXELS         = 7
+  BYTES_PER_PIXEL    = 3
+  BUFFER_BYTES       = NUM_PIXELS * BYTES_PER_PIXEL
+  DEFAULT_BRIGHTNESS = 64           ' [0..255] -- conservative for 7 px on shared 5 V
+  COLOR_FULL_SCALE   = 255          ' 8-bit color/brightness full scale
+  RESET_US           = 80           ' latch/reset: hold low >= 50 us (WS2812B)
+  ' WS2812 wire order is G, R, B -- byte offsets within one pixel:
+  WIRE_OFFSET_G      = 0
+  WIRE_OFFSET_R      = 1
+  WIRE_OFFSET_B      = 2
+  ' WS2812B nominal HIGH time per bit (ns). The bit CELL is a fixed 1.25 us (WS2812_HZ); only
+  ' the HIGH time differs and the low remainder is whatever's left of the cell. Validated against
+  ' REF jm_rgbx_pixel (start_2812b = 400/800). For a plain WS2812 strip use 350 / 700.
+  T0H_NS             = 400
+  T1H_NS             = 800
+  WS2812_HZ          = 800_000      ' 800 kHz -> fixed 1.25 us bit cell (CT-paced)
+  HIGH_TICK_OVERHEAD = 9            ' drvh->waitx instruction latency comp (per jm_rgbx_pixel)
+  ' bit-bang scratch constants
+  BITS_PER_BYTE      = 8
+  MSB_ALIGN_SHIFT    = 24           ' 32 - BITS_PER_BYTE: moves bit7 to bit31 for MSB-first
+  NS_PER_US          = 1000
+  US_PER_SEC         = 1_000_000
+
+CON ' ---- packed-color decode ----
+  RED_SHIFT   = 16
+  GREEN_SHIFT = 8
+  BYTE_MASK   = $FF
+
+CON ' ---- named colors (packed $RRGGBB) ----
+  {Spin2_Doc_CON}
+  BLACK  = $00_00_00
+  RED    = $FF_00_00
+  GREEN  = $00_FF_00
+  BLUE   = $00_00_FF
+  WHITE  = $FF_FF_FF
+  YELLOW = $FF_FF_00
+  CYAN   = $00_FF_FF
+  PURPLE = $FF_00_FF
+  ORANGE = $FF_40_00
+
+DAT ' ---- singleton state ----
+
+  ledPin      LONG    -1
+  brightness  LONG    DEFAULT_BRIGHTNESS
+  ' transmit buffer, already in WS2812 wire order: G, R, B for each pixel
+  pixelBytes  BYTE    0[BUFFER_BYTES]
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinNumber)
+'' Configure the data pin, blank the strip, and latch it off.
+''
+'' @param pinNumber - P2 pin driving the WS2812 data line
+
+    ledPin := pinNumber
+    brightness := DEFAULT_BRIGHTNESS
+    pinl(ledPin)                                              ' drive idle-low (output)
+    clear()
+    show()
+
+PUB setBrightness(level)
+'' Set master brightness [0..255]. Takes effect on subsequent setPixel* calls.
+''
+'' @param level - brightness [0..255]
+
+    brightness := 0 #> level <# COLOR_FULL_SCALE
+
+PUB setPixelColor(index, redLvl, grnLvl, bluLvl) | pixelBase
+'' Set one pixel from separate red/green/blue [0..255]. Brightness-scaled, stored in wire order.
+''
+'' @param index - pixel index [0..NUM_PIXELS-1]; out-of-range is ignored
+'' @param redLvl - red intensity [0..255]
+'' @param grnLvl - green intensity [0..255]
+'' @param bluLvl - blue intensity [0..255]
+
+' Local Variables:
+' @local pixelBase - byte offset of this pixel in the wire buffer
+
+    if (index >= 0) and (index < NUM_PIXELS)
+        redLvl := (0 #> redLvl <# COLOR_FULL_SCALE) * brightness / COLOR_FULL_SCALE
+        grnLvl := (0 #> grnLvl <# COLOR_FULL_SCALE) * brightness / COLOR_FULL_SCALE
+        bluLvl := (0 #> bluLvl <# COLOR_FULL_SCALE) * brightness / COLOR_FULL_SCALE
+        pixelBase := index * BYTES_PER_PIXEL
+        BYTE[@pixelBytes][pixelBase + WIRE_OFFSET_G] := grnLvl
+        BYTE[@pixelBytes][pixelBase + WIRE_OFFSET_R] := redLvl
+        BYTE[@pixelBytes][pixelBase + WIRE_OFFSET_B] := bluLvl
+
+PUB setPixelPacked(index, rgb)
+'' Set one pixel from a packed $RRGGBB value (use the named-color constants).
+''
+'' @param index - pixel index [0..NUM_PIXELS-1]
+'' @param rgb - packed color, $RRGGBB
+
+    setPixelColor(index, (rgb >> RED_SHIFT) & BYTE_MASK, (rgb >> GREEN_SHIFT) & BYTE_MASK, rgb & BYTE_MASK)
+
+PUB fill(rgb) | pixelIdx
+'' Set every pixel to the same packed $RRGGBB color (does not latch; call show()).
+''
+'' @param rgb - packed color, $RRGGBB
+
+' Local Variables:
+' @local pixelIdx - pixel loop index
+
+    repeat pixelIdx from 0 to NUM_PIXELS - 1
+        setPixelPacked(pixelIdx, rgb)
+
+PUB clear()
+'' Blank the buffer (does not latch; call show()).
+''
+
+    fill(BLACK)
+
+PUB show()
+'' Latch the current buffer out to the strip.
+''
+
+    streamBuffer()
+
+PRI streamBuffer() | pinLocal, pBuf, nBytes, ticksPerUs, t0h, t1h, cycleTix, bitTimer, ptr, byteCnt, curByte, bitCnt
+' Stream the pixel buffer out the data pin, MSB-first, then hold the reset latch.
+' Timing model per REF jm_rgbx_pixel: each bit is a fixed 1.25 us CELL (WS2812_HZ) paced by a
+' CT timer (addct1/waitct1); only the HIGH time differs per bit, less HIGH_TICK_OVERHEAD ticks
+' to compensate for drvh->waitx instruction latency. The low remainder is whatever's left of
+' the cell, so per-instruction overhead never drifts the period.
+'
+' Local Variables:
+' @local pinLocal - data pin number (copied to a local for inline PASM)
+' @local pBuf - hub address of the pixel buffer
+' @local nBytes - number of bytes to stream
+' @local ticksPerUs - system clock ticks per microsecond
+' @local t0h - high-time ticks for a 0 bit (overhead-compensated)
+' @local t1h - high-time ticks for a 1 bit (overhead-compensated)
+' @local cycleTix - ticks in one fixed 1.25 us bit cell
+' @local bitTimer - CT reference, advanced one cell per bit
+' @local ptr - working hub read pointer (inline PASM)
+' @local byteCnt - remaining byte counter (inline PASM)
+' @local curByte - byte being shifted out (inline PASM)
+' @local bitCnt - remaining bit counter (inline PASM)
+
+    ' derive tick counts from the live clock (ticks/us avoids 32-bit overflow vs ns*clkfreq)
+    ticksPerUs := clkfreq / US_PER_SEC
+    t0h := (T0H_NS * ticksPerUs / NS_PER_US) - HIGH_TICK_OVERHEAD
+    t1h := (T1H_NS * ticksPerUs / NS_PER_US) - HIGH_TICK_OVERHEAD
+    cycleTix := clkfreq / WS2812_HZ                           ' fixed 1.25 us bit cell
+
+    pinLocal := ledPin
+    pBuf     := @pixelBytes
+    nBytes   := BUFFER_BYTES
+
+    org
+                        mov     byteCnt, nBytes
+                        mov     ptr, pBuf
+.byteLoop
+                        rdbyte  curByte, ptr
+                        add     ptr, #1
+                        shl     curByte, #MSB_ALIGN_SHIFT      ' bit7 -> bit31
+                        mov     bitCnt, #BITS_PER_BYTE
+                        getct   bitTimer                       ' resync the cell clock each byte
+.bitLoop
+                        shl     curByte, #1             wc     ' next bit -> C, MSB first
+                        drvh    pinLocal
+            if_c        waitx   t1h                            ' high time only; cell is fixed
+            if_nc       waitx   t0h
+                        drvl    pinLocal
+                        addct1  bitTimer, cycleTix             ' next 1.25 us cell boundary
+                        waitct1                                ' hold low for the rest of the cell
+                        djnz    bitCnt, #.bitLoop
+                        djnz    byteCnt, #.byteLoop
+    end
+
+    waitus(RESET_US)                                          ' latch the frame
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

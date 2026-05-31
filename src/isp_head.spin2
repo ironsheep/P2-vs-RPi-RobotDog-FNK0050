@@ -1,0 +1,133 @@
+'' =================================================================================================
+''
+''   File....... isp_head.spin2
+''   Purpose.... TIER-3 head-pan driver: aim the head (one PCA9685 servo) in degrees
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Robot Dog (FNK0050): the head is a single degree of freedom -- pan only -- on PCA9685
+   channel 15 (Freenove uses ch 15, center ~90 deg, ~50..130 deg of useful travel). This
+   object is intentionally thin; it earns its keep as the mount point for the future
+   head-pan + ultrasonic "scan the room" behavior.
+
+   The PCA9685 controller must already be started/configured by the owner (isp_robot_dog)
+   before any pan call moves hardware -- this object only owns its one servo channel.
+}
+
+CON ' ---- head geometry ----
+  HEAD_CHANNEL    = 15              ' PCA9685 channel for the head-pan servo
+  HEAD_CENTER_DEG = 90              ' straight ahead
+  HEAD_MIN_DEG    = 50              ' useful travel limits (Freenove range)
+  HEAD_MAX_DEG    = 130
+  MIN_STEP_DEG    = 1               ' smallest sweep step magnitude
+
+OBJ
+
+  panServo : "isp_i2c_pca9685_servo"                         ' the one head servo (TIER-3 seed)
+  term     : "isp_serial_singleton"                          ' debug terminal output
+
+DAT ' ---- singleton state ----
+
+  currentAngle  LONG  HEAD_CENTER_DEG
+  bShowDebug    BYTE  FALSE
+  headName      BYTE  "head", 0
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start()
+'' Assign the head-pan servo channel. (PCA9685 controller must already be configured.)
+''
+
+    panServo.init(HEAD_CHANNEL, panServo.M_NOT_SET, 0, @headName)
+    currentAngle := HEAD_CENTER_DEG
+
+PUB panTo(angleDeg)
+'' Aim the head to an absolute angle, clamped to the head's travel limits.
+''
+'' @param angleDeg - desired pan angle in degrees (HEAD_MIN_DEG..HEAD_MAX_DEG)
+
+    currentAngle := HEAD_MIN_DEG #> angleDeg <# HEAD_MAX_DEG
+    panServo.writePosition(panServo.M_ANGLE, currentAngle)
+    if bShowDebug
+        term.fstr1(string("head- panTo %d deg\r\n"), currentAngle)
+
+PUB center()
+'' Aim the head straight ahead.
+''
+
+    panTo(HEAD_CENTER_DEG)
+
+PUB getAngle() : angleDeg
+'' Return the head's last commanded angle, in degrees.
+''
+'' @returns angleDeg - last commanded pan angle
+
+    angleDeg := currentAngle
+
+PUB sweep(fromDeg, toDeg, stepDeg, dwellMs) | angleDeg, stepSigned
+'' Pan from one angle to another in fixed steps, dwelling at each (blocking helper for scans).
+''
+'' @param fromDeg - starting angle in degrees
+'' @param toDeg - ending angle in degrees
+'' @param stepDeg - step size magnitude in degrees (direction is inferred)
+'' @param dwellMs - milliseconds to dwell at each step
+
+' Local Variables:
+' @local angleDeg - current step angle
+' @local stepSigned - signed per-step increment toward toDeg
+
+    stepSigned := (1 #> (abs stepDeg)) * ((toDeg >= fromDeg) ? 1 : -1)
+    angleDeg := fromDeg
+    panTo(angleDeg)
+    waitms(dwellMs)
+    repeat while angleDeg <> toDeg
+        angleDeg += stepSigned
+        if ((stepSigned > 0) and (angleDeg > toDeg)) or ((stepSigned < 0) and (angleDeg < toDeg))
+            angleDeg := toDeg
+        panTo(angleDeg)
+        waitms(dwellMs)
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

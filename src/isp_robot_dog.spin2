@@ -1,0 +1,415 @@
+{Spin2_v47}
+'' =================================================================================================
+''
+''   File....... isp_robot_dog.spin2
+''   Purpose.... TIER-4 body coordinator: 4 legs + head + IMU + battery; gaits, poses, gestures
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... May 2026
+''   Updated.... 31 May 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   The backend body-control processor. Intended to run in its OWN cog (the sole owner of the
+   I2C bus) -- launch it with cogspin(NEWCOG, dog.start(pinSCL, pinSDA), @stack). Inside that
+   cog it runs three Spin2 v47 cooperative tasks: the dispatch loop (this method), motionTask,
+   and senseTask. See DOCs/P2_FIRMWARE_THEORY_OF_OPS.md for the full model.
+
+   The frontend cog talks to this object ONLY through the hub mailbox: postCommand() to send
+   intent, and the telemetry getters to read attitude/battery/mode. Those methods touch shared
+   DAT only -- never the I2C bus -- so they are safe to call from another cog.
+
+   STATUS: proposed/draft. The forward gait and the hello gesture are representative
+   implementations using the (INFERRED) leg IK -- VERIFY on hardware. Backward/turn gaits and
+   the remaining gestures follow the same patterns and are left as extensions. Joint outputs
+   are clamped by isp_leg, so a wrong trajectory cannot exceed the servo range.
+}
+
+CON ' ---- commands (frontend -> backend mailbox) ----
+  {Spin2_Doc_CON}
+  ' Posted with postCommand(); consumed by the dispatch loop:
+  '  CMD_NONE       - no command
+  '  CMD_STOP       - stop motion, hold a neutral stand
+  '  CMD_FORWARD    - walk forward (latched until STOP/other)
+  '  CMD_RELAX      - relax to the tucked rest pose
+  '  CMD_STAND      - ease to the neutral standing pose
+  '  CMD_SIT        - sit (rear lowered)
+  '  CMD_HELLO      - one-shot wave gesture
+  '  CMD_HEAD       - pan head to arg0 degrees
+  #0, CMD_NONE, CMD_STOP, CMD_FORWARD, CMD_RELAX, CMD_STAND, CMD_SIT, CMD_HELLO, CMD_HEAD
+
+CON ' ---- mode states (telemetry) ----
+  {Spin2_Doc_CON}
+  ' Reported by getModeState():
+  '  MODE_IDLE         - holding a static pose
+  '  MODE_GAITING      - executing a latched gait
+  '  MODE_GESTURE_BUSY - executing a one-shot gesture
+  '  MODE_RELAXED      - relaxed/resting
+  '  MODE_LOWBATT      - forced rest, battery below cutoff
+  #0, MODE_IDLE, MODE_GAITING, MODE_GESTURE_BUSY, MODE_RELAXED, MODE_LOWBATT
+
+CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
+  STAND_HEIGHT_MM     = 99          ' neutral foot extension (Freenove default)
+  STANCE_LATERAL_MM   = 10          ' foot lateral offset (left +, right -)
+  RELAX_X_MM          = 55          ' tucked rest pose (Freenove relax point)
+  RELAX_HEIGHT_MM     = 78
+  SIT_FRONT_HEIGHT_MM = 60          ' front legs shortened to sit back
+  GAIT_X_AMPL_MM      = 12          ' fore/aft stride amplitude
+  GAIT_LIFT_MM        = 6           ' foot-lift amplitude during swing
+  GAIT_STEP_DEG       = 15          ' gait phase advance per motion frame
+  HELLO_X_MM          = 80          ' raised front-right foot reach for the wave
+  HELLO_AMPL_MM       = 30          ' wave height amplitude
+  HELLO_SPEED_DEG     = 20          ' wave phase advance per frame
+  HELLO_FRAMES        = 36          ' frames before the gesture completes
+  ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (for qsin/qcos phase math)
+  DEGREES_PER_CIRCLE  = 360
+  HALF_CIRCLE_DEG     = 180
+
+CON ' ---- runtime ----
+  TASK_STACK_LONGS      = 64        ' per-task cooperative stack
+  BATTERY_READ_PASSES   = 50        ' senseTask passes between battery reads
+  PIN_OE_UNUSED         = -1        ' PCA9685 /OE not driven by the P2 (tied on the board)
+
+OBJ
+
+  pca9685 : "isp_i2c_pca9685"                                ' shared PWM controller (start it once)
+  flLeg   : "isp_leg"                                        ' front-left
+  blLeg   : "isp_leg"                                        ' back-left
+  frLeg   : "isp_leg"                                        ' front-right
+  brLeg   : "isp_leg"                                        ' back-right
+  head    : "isp_head"
+  imu     : "isp_imu"
+  battery : "isp_battery_monitor"
+  term    : "isp_serial_singleton"                           ' debug terminal output
+
+DAT ' ---- command mailbox (frontend cog writes, backend cog reads) ----
+
+  cmdSeq    LONG  0                                           ' bumped LAST by postCommand (publish)
+  cmdId     LONG  0
+  cmdArg0   LONG  0
+  cmdArg1   LONG  0
+  cmdArg2   LONG  0
+  cmdArg3   LONG  0
+  ackSeq    LONG  0                                           ' backend sets = cmdSeq when consumed
+
+DAT ' ---- telemetry (backend cog writes, anyone reads) ----
+
+  attPitch        LONG  0                                     ' degrees
+  attRoll         LONG  0
+  battMilliVolts  LONG  0
+  modeState       LONG  MODE_IDLE
+  busyFlag        LONG  FALSE
+
+DAT ' ---- internal control state (backend cog only) ----
+
+  activeMode       LONG  MODE_IDLE
+  gaitPhase        LONG  0
+  gestureId        LONG  CMD_NONE
+  gesturePhase     LONG  0
+  bLowBattLatched  BYTE  FALSE
+  bShowDebug       BYTE  FALSE
+  motionStack      LONG  0[TASK_STACK_LONGS]
+  senseStack       LONG  0[TASK_STACK_LONGS]
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinSCL, pinSDA)
+'' Configure controller, limbs and sensors, then run the cooperative backend loop (never returns).
+'' Launch in its own cog (the I2C bus owner) via cogspin.
+''
+'' @param pinSCL - I2C clock (SCL) pin number
+'' @param pinSDA - I2C data (SDA) pin number
+
+    pca9685.start(pinSCL, pinSDA, PIN_OE_UNUSED)             ' bring up the shared PWM controller once
+    pca9685.configureController()
+
+    flLeg.init(flLeg.SIDE_LEFT,  flLeg.END_FRONT)            ' assign each leg its channels + mirror
+    blLeg.init(blLeg.SIDE_LEFT,  blLeg.END_BACK)
+    frLeg.init(frLeg.SIDE_RIGHT, frLeg.END_FRONT)
+    brLeg.init(brLeg.SIDE_RIGHT, brLeg.END_BACK)
+    head.start()
+
+    imu.start(pinSCL, pinSDA)                                ' sensors share the same bus
+    imu.calibrateGyro()
+    battery.start(pinSCL, pinSDA)
+
+    activeMode := MODE_IDLE
+    modeState := MODE_IDLE
+    busyFlag := FALSE
+    bLowBattLatched := FALSE
+    head.center()
+    standPose()                                              ' safe initial stance (uses flagged IK)
+
+    taskspin(NEWTASK, motionTask(), @motionStack)            ' cooperative siblings in this cog
+    taskspin(NEWTASK, senseTask(), @senseStack)
+    dispatchLoop()                                           ' becomes the dispatch task (no return)
+
+PUB postCommand(commandId, arg0, arg1, arg2, arg3)
+'' (frontend cog) Publish a command to the backend mailbox. Latest-wins, single slot.
+''
+'' @param commandId - one of CMD_STOP..CMD_HEAD
+'' @param arg0 - command argument 0 (e.g. head angle for CMD_HEAD)
+'' @param arg1 - command argument 1
+'' @param arg2 - command argument 2
+'' @param arg3 - command argument 3
+
+    cmdArg0 := arg0
+    cmdArg1 := arg1
+    cmdArg2 := arg2
+    cmdArg3 := arg3
+    cmdId := commandId
+    cmdSeq++                                                  ' publish LAST (args are now stable)
+
+PUB getModeState() : mode
+'' Return the current backend mode (one of MODE_IDLE..MODE_LOWBATT).
+''
+'' @returns mode - current mode state
+
+    mode := modeState
+
+PUB getBatteryMilliVolts() : milliVolts
+'' Return the most recent battery reading, in millivolts.
+''
+'' @returns milliVolts - pack voltage in millivolts (0 until first read)
+
+    milliVolts := battMilliVolts
+
+PUB getAttitude() : pitchDeg, rollDeg
+'' Return the most recent accelerometer tilt estimate, in degrees.
+''
+'' @returns pitchDeg - pitch (forward/back) in degrees
+'' @returns rollDeg - roll (left/right) in degrees
+
+    pitchDeg := attPitch
+    rollDeg := attRoll
+
+PUB isBusy() : bActive
+'' Return TRUE while a one-shot gesture is running.
+''
+'' @returns bActive - TRUE if a gesture is in progress
+
+    bActive := busyFlag
+
+PUB enableDebug(bEnable)
+'' Turn on/off this object's debug messaging.
+''
+'' @param bEnable - TRUE shows this object's debug output on the serial port
+
+    bShowDebug := bEnable
+
+PRI dispatchLoop()
+' Backend main task: consume commands, enforce the safety floor, yield. Never returns.
+
+    repeat
+        if cmdSeq <> ackSeq
+            consumeCommand()
+        applySafetyFloor()
+        tasknext()
+
+PRI motionTask()
+' Cooperative task: advance the active motion one frame per scheduling turn.
+
+    repeat
+        case activeMode
+            MODE_GAITING:
+                advanceGait()
+            MODE_GESTURE_BUSY:
+                advanceGesture()
+            other:
+                ' static pose -- nothing to advance
+        tasknext()
+
+PRI senseTask() | passCount, pitchDeg, rollDeg
+' Cooperative task: refresh the attitude mailbox each turn; the battery less often.
+'
+' Local Variables:
+' @local passCount - passes since the last battery read
+' @local pitchDeg - latest pitch estimate
+' @local rollDeg - latest roll estimate
+
+    passCount := 0
+    repeat
+        pitchDeg, rollDeg := imu.tiltDegrees()
+        attPitch := pitchDeg
+        attRoll := rollDeg
+        passCount++
+        if passCount >= BATTERY_READ_PASSES
+            passCount := 0
+            battMilliVolts := battery.batteryMilliVolts()
+        tasknext()
+
+PRI consumeCommand() | requestedCmd
+' Latch the newest command, acknowledge it, and set the resulting mode/pose.
+'
+' Local Variables:
+' @local requestedCmd - the command id being consumed
+
+    requestedCmd := cmdId
+    ackSeq := cmdSeq                                          ' acknowledge (frontend sees accepted)
+    case requestedCmd
+        CMD_STOP, CMD_STAND:
+            activeMode := MODE_IDLE
+            modeState := MODE_IDLE
+            standPose()
+        CMD_FORWARD:
+            activeMode := MODE_GAITING
+            modeState := MODE_GAITING
+            gaitPhase := 0
+        CMD_RELAX:
+            activeMode := MODE_RELAXED
+            modeState := MODE_RELAXED
+            relaxPose()
+        CMD_SIT:
+            activeMode := MODE_IDLE
+            modeState := MODE_IDLE
+            sitPose()
+        CMD_HEAD:
+            head.panTo(cmdArg0)
+        CMD_HELLO:
+            if busyFlag == FALSE                              ' reject if a gesture is already running
+                busyFlag := TRUE
+                gestureId := CMD_HELLO
+                gesturePhase := 0
+                activeMode := MODE_GESTURE_BUSY
+                modeState := MODE_GESTURE_BUSY
+
+PRI applySafetyFloor()
+' Backend-owned safety: force rest (once) when the pack drops below the cutoff.
+
+    if (battMilliVolts <> 0) and (battMilliVolts < battery.LOW_BATTERY_CUTOFF_MV)
+        if bLowBattLatched == FALSE
+            bLowBattLatched := TRUE
+            activeMode := MODE_RELAXED
+            modeState := MODE_LOWBATT
+            relaxPose()
+            if bShowDebug
+                term.fstr1(string("dog- LOW BATTERY %d mV -> relax\r\n"), battMilliVolts)
+
+PRI advanceGait() | angleA, angleB, strideXA, footYA, strideXB, footYB
+' Advance the forward trot one frame. Diagonal pairs {FL,BR} and {FR,BL} are 180 deg out of phase.
+'
+' Local Variables:
+' @local angleA - phase of pair A in P2 angle units
+' @local angleB - phase of pair B (180 deg offset)
+' @local strideXA - fore/aft position of pair A
+' @local footYA - foot extension of pair A
+' @local strideXB - fore/aft position of pair B
+' @local footYB - foot extension of pair B
+
+    angleA := degToUnits(gaitPhase)
+    angleB := degToUnits(gaitPhase + HALF_CIRCLE_DEG)
+    strideXA := qcos(GAIT_X_AMPL_MM, angleA, 0)
+    strideXB := qcos(GAIT_X_AMPL_MM, angleB, 0)
+    ' foot extension never exceeds the stance height (foot lifts only on the swing half)
+    footYA := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, angleA, 0)) <# STAND_HEIGHT_MM
+    footYB := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, angleB, 0)) <# STAND_HEIGHT_MM
+    flLeg.moveToXYZ(strideXA, footYA, STANCE_LATERAL_MM)
+    brLeg.moveToXYZ(strideXA, footYA, -STANCE_LATERAL_MM)
+    frLeg.moveToXYZ(strideXB, footYB, -STANCE_LATERAL_MM)
+    blLeg.moveToXYZ(strideXB, footYB, STANCE_LATERAL_MM)
+    gaitPhase += GAIT_STEP_DEG
+    if gaitPhase >= DEGREES_PER_CIRCLE
+        gaitPhase -= DEGREES_PER_CIRCLE
+
+PRI advanceGesture()
+' Advance the active one-shot gesture one frame.
+
+    case gestureId
+        CMD_HELLO:
+            advanceHello()
+        other:
+            finishGesture()
+
+PRI advanceHello() | waveY
+' Wave the front-right leg by oscillating its foot height; finish after HELLO_FRAMES.
+'
+' Local Variables:
+' @local waveY - oscillating foot extension for the wave
+
+    waveY := STAND_HEIGHT_MM + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
+    frLeg.moveToXYZ(HELLO_X_MM, waveY, -STANCE_LATERAL_MM)
+    gesturePhase++
+    if gesturePhase >= HELLO_FRAMES
+        finishGesture()
+
+PRI finishGesture()
+' End the current gesture and return to a neutral stand.
+
+    busyFlag := FALSE
+    gestureId := CMD_NONE
+    activeMode := MODE_IDLE
+    modeState := MODE_IDLE
+    standPose()
+
+PRI standPose()
+' Ease all four feet to the neutral standing stance.
+
+    allLegsToXYZ(0, STAND_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)
+
+PRI relaxPose()
+' Tuck all four feet to the resting pose.
+
+    allLegsToXYZ(RELAX_X_MM, RELAX_HEIGHT_MM, 0, 0)
+
+PRI sitPose()
+' Lower the rear by shortening the back legs while the front legs stand.
+
+    flLeg.moveToXYZ(0, STAND_HEIGHT_MM, STANCE_LATERAL_MM)
+    frLeg.moveToXYZ(0, STAND_HEIGHT_MM, -STANCE_LATERAL_MM)
+    blLeg.moveToXYZ(0, SIT_FRONT_HEIGHT_MM, STANCE_LATERAL_MM)
+    brLeg.moveToXYZ(0, SIT_FRONT_HEIGHT_MM, -STANCE_LATERAL_MM)
+
+PRI allLegsToXYZ(footX, footY, leftZ, rightZ)
+' Drive all four feet to (footX, footY, z) with the side-appropriate lateral z.
+'
+' @param footX - fore/aft target, mm
+' @param footY - foot extension, mm
+' @param leftZ - lateral target for the left legs, mm
+' @param rightZ - lateral target for the right legs, mm
+
+    flLeg.moveToXYZ(footX, footY, leftZ)
+    blLeg.moveToXYZ(footX, footY, leftZ)
+    frLeg.moveToXYZ(footX, footY, rightZ)
+    brLeg.moveToXYZ(footX, footY, rightZ)
+
+PRI degToUnits(degrees) : angleUnits
+' Convert degrees to P2 CORDIC angle units (wraps mod 360 via 32-bit overflow).
+'
+' @param degrees - angle in degrees
+' @returns angleUnits - angle in P2 units
+
+    angleUnits := degrees * ANGLE_UNITS_PER_DEG
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}
