@@ -5,9 +5,9 @@
 ![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-<img src='DOCs/Picture/icon.png' width='50%' alt='Freenove FNK0050 Robot Dog (shown with the stock Raspberry Pi — to be replaced with the P2 board)'/>
+<img src='DOCs/Picture/fullbody-right.png' width='60%' alt='Freenove FNK0050 Robot Dog with the Parallax P2 Edge Module mounted where the Raspberry Pi used to sit'/>
 
-> *Shown with the stock Raspberry Pi on top — to be replaced with the P2 board.*
+> *The FNK0050 Robot Dog with the Parallax **P2 Edge Module** mounted in place of the Raspberry Pi — the "P2 EDGE" module and chip are visible on top.*
 
 Porting the **Freenove Robot Dog Kit (FNK0050)** from its stock **Raspberry Pi**
 controller to a **Parallax Propeller 2 (P2)**. The P2 — on an Edge Module +
