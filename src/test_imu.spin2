@@ -1,0 +1,42 @@
+'' =================================================================================================
+''   File....... test_imu.spin2
+''   Purpose.... AUTO-RUN single-interface bring-up: MPU6050 IMU (I2C 0x68). Robot still on bench.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile -d). DEBUG @ 2 Mbaud. Hold robot LEVEL+STILL while calibrating.
+'  At rest expect: az ~ +1000 mg, ax/ay ~ 0, gyro ~ 0 mdps after cal.
+'  Run: pnut-term-ts -r test_imu.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 20
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_SCL     = 13
+  PIN_SDA     = 15
+  SAMPLES     = 20
+  PERIOD_MS   = 250
+
+OBJ
+  imu : "isp_imu"
+
+PUB main() | i, calStatus, ax, ay, az, gx, gy, gz, pitch, roll
+    waitms(100)
+    DEBUG("=== IMU test (MPU6050 @ 0x68) ===")
+    if imu.start(PIN_SCL, PIN_SDA) <> imu.SUCCESS
+        DEBUG("IMU: MPU6050 NOT FOUND")
+    else
+        DEBUG("calibrating gyro -- hold level & still...")
+        calStatus := imu.calibrateGyro()
+        if calStatus == imu.SUCCESS
+            DEBUG("calibrated (still window accepted); streaming (a=milli-g, g=milli-dps, tilt=deg)")
+        else
+            DEBUG("WARNING: motion during calibration (E_NOT_STILL) -- bias is best-effort")
+        repeat i from 1 to SAMPLES
+            ax, ay, az := imu.readAccelMilliG()
+            gx, gy, gz := imu.readGyroMilliDPS()
+            pitch, roll := imu.tiltDegrees()
+            DEBUG("  ", udec_(i), ": a ", sdec_(ax), " ", sdec_(ay), " ", sdec_(az), "  g ", sdec_(gx), " ", sdec_(gy), " ", sdec_(gz), "  tilt p", sdec_(pitch), " r", sdec_(roll))
+            waitms(PERIOD_MS)
+    DEBUG("imu done")
+    DEBUG("TEST_DONE")
+    repeat

@@ -20,8 +20,11 @@ Raspberry Pi sits, via an adapter that mates to the connection board's 40-pin he
 > rails (the Pi's own ~1.8 kΩ pull-ups left with it). So the **P2 must supply 3.3 V pull-ups**
 > and there is **no 5 V-idled-bus hazard** (§2, §4). The 3.3 V/5 V rails are **not bridged**
 > (30+ MΩ) so the 5 V on pins 1/17 is benign leakage and the **MPU6050 (VDD max 3.46 V) is
-> safe**. Remaining: **classify the SDA→GND 6.9 kΩ path** (resistor vs ESD diode) and check the
-> **ECHO divider** (§2, §4).
+> safe**. ~~Remaining: classify the SDA→GND 6.9 kΩ path and check the ECHO divider.~~
+> **✅ All resolved — bring-up 2026-06-01 (P2 fitted, battery in):** the SDA→GND path is a real
+> 6.9 kΩ resistor (use `PU_1K5`), ECHO is 5 V undivided (now read via a fitted ~1 kΩ series R into
+> P9), and with the adapter's 3.3 V rail + P2 `PU_1K5` pull-ups **all three I²C devices answer**
+> (0x40/0x48/0x68). Per-interface results: §7.
 
 ### Additional resources
 - **Freenove FNK0050 official docs (Robot Dog):** https://docs.freenove.com/projects/fnk0050/en/latest/
@@ -86,7 +89,11 @@ voltage thresholds.
   included** — buy separately (Freenove battery list above). Wired **2-series (2S)**.
 - **Voltage (from `ADS7830.py` / `Server.py`):** **8.4 V** full (2 × 4.2 V), **7.4 V**
   nominal, software **low-battery cutoff at 6.4 V** → at/below that the server relaxes the
-  legs and exits. The ADC reads the pack through a ÷2 divider (`data/255 × 5.0 × 2`).
+  legs and exits. The ADC reads the pack through a **÷3 divider** — **METERED 2026-06-01**:
+  a 7.68 V pack reads raw **131** (≈ 2.57 V at the ADC pin), so pin = pack/3, **not** the
+  `×2` in Freenove's `ADS7830.py` (`data/255 × 5.0 × 2`), which is wrong for this v1.0 board.
+  `isp_battery_monitor` now uses `DIVIDER_RATIO = 3`; bring-up reads **7.76 V vs 7.68 V
+  metered** (±1 LSB ≈ 59 mV through the divider).
 - **⚠️ No on-board charging.** Direct quote: *"The control board connected to the USB cable
   will **not** charge the batteries. So you also need a charger."* You **remove the 18650
   cells and charge them in an external 18650 charger** (*"almost any charger suitable for
@@ -254,11 +261,34 @@ Most of the robot is on **I²C**, so porting is mostly "implement an I²C master
 
 - [x] Meter the **5 V** rail on header pins 2/4 — **~5 V present (2026-05-31)**; still confirm the board regulator's current headroom.
 - [~] Determine **3.3 V provenance** (pins 1/17) — **measured ~5 V, not 3.3 V (2026-05-31)**; rail is absent and pulled toward 5 V. Run the resistance test to find through what.
-- [ ] Confirm **I²C pull-up rail** is 3.3 V (not 5 V) — **PENDING & gating**: pins 1/17 currently 5 V; resolve before connecting the P2 (§2 test, §4).
-- [x] **ECHO is 5 V, undivided** (pin 15→GND 15.5 MΩ; VCC 5 V, 2026-05-31) → fit a **~1 kΩ series
-      R into P9** (P2 pin clamp, ≤10 mA). Ultrasonic is on the **Load/servo rail** — only live with Load ON.
+- [x] Confirm **I²C pull-up rail** is 3.3 V (not 5 V) — **RESOLVED (bring-up 2026-06-01)**: adapter
+      supplies 3.3 V on 1/17, P2 drives `PU_1K5`, and all three I²C devices ACK (0x40/0x48/0x68).
+- [x] **ECHO is 5 V, undivided** (pin 15→GND 15.5 MΩ; VCC 5 V, 2026-05-31) → **~1 kΩ series R into
+      P9 fitted; ranging PASS 2026-06-01** (P2 pin clamp, ≤10 mA). Ultrasonic on the **Load/servo
+      rail** — only live with Load ON.
 - [~] Establish a single **common ground** — robot grounds (pins 6/9/14) **verified consistent at 0 V (2026-05-31)**; still tie robot GND ↔ P2 GND at wiring.
 - [ ] Keep robot signals on **P0–P57**; leave **P58–P63** for flash/serial.
+
+---
+
+## 7. Bring-up verification (2026-06-01)
+
+P2 fitted on the adapter, battery installed. Each interface proven in isolation with a dedicated
+`src/test_*.spin2` top file emitting P2 `DEBUG()` at 2 Mbaud (see `P2_BRINGUP_PLAYBOOK.md` for the
+method and `src/README.md` §7 for the run recipe). Discrete-pin and bus facts confirmed:
+
+| Interface | Pins | Result | Note |
+|---|---|---|---|
+| I²C bus | SCL P13 / SDA P15 | ✅ PASS | 0x40 PCA9685, 0x48 ADS7830, 0x68 MPU6050 (+0x70 = PCA9685 all-call). 3.3 V rail + `PU_1K5` confirmed. |
+| WS2812 LED ring | P8 | ✅ PASS | Solid R/G/B (GRB order correct) + rainbow, all 7 px; 3.3 V data into 5 V strip works. |
+| Buzzer | P10 | ✅ PASS | **Only sounds with the Load/servo switch ON** — the buzzer is on the Load rail, not logic power. |
+| Ultrasonic | TRIG P11 / ECHO P9 | ✅ PASS | Tracks distance; **~1 kΩ inline series R into P9** handles the 5 V echo via the pin clamp. Load on. |
+| IMU (MPU6050) | I²C | ✅ PASS | Accel `az≈+1 g` level; gyro `<0.25 deg/s` at rest after the hardened `calibrateGyro` (settle + pacing + motion-reject). |
+| Battery (ADS7830) | I²C ch0 | ✅ FIXED | **Divider is ÷3, not ÷2** — metered 7.68 V pack reads 7.76 V (`DIVIDER_RATIO = 3`). |
+
+Servo/motion bring-up (PCA9685 ch 2–13 legs, ch 15 head) is the **next** step: center-only
+(90°/1500 µs), robot lifted, one leg at a time — never command extremes until per-joint trim is
+calibrated.
 
 ---
 

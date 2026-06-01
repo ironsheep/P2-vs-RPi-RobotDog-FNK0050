@@ -16,11 +16,12 @@
    Sits on isp_i2c_ads7830 (TIER-2 chip) which sits on isp_i2c_singleton (TIER-1 bus). The
    caller asks "how many volts?" / "is it low?" -- never about ADC counts or channels.
 
-   Robot Dog (FNK0050): the pack feeds ADS7830 channel 0 through a half-scale resistor
-   divider, so true pack voltage = (pin voltage) x DIVIDER_RATIO. Freenove samples 9x and
-   uses the MEDIAN to reject switching noise, then shuts the dog down below 6.4 V
-   (Server.battery_reminder). DIVIDER_RATIO (x2) is INFERRED from Freenove ADS7830.py
-   (* 5.0 * 2) -- meter before trusting.
+   Robot Dog (FNK0050): the pack feeds ADS7830 channel 0 through a resistor divider, so true
+   pack voltage = (pin voltage) x DIVIDER_RATIO. Freenove samples 9x and uses the MEDIAN to
+   reject switching noise, then shuts the dog down below 6.4 V (Server.battery_reminder).
+   DIVIDER_RATIO is x3 on THIS board (v1.0): METERED 2026-06-01 -- pack 7.68 V read as raw 131
+   (= 2.57 V at the pin), so pin = pack/3, not the /2 in Freenove ADS7830.py (* 5.0 * 2). The
+   x2 was wrong for our hardware.
 }
 
 CON ' ---- status codes ----
@@ -33,7 +34,7 @@ CON ' ---- status codes ----
 
 CON ' ---- battery sensing ----
   BATTERY_CHANNEL        = 0        ' ADS7830 input wired to the pack divider
-  DIVIDER_RATIO          = 2        ' pack = pin x 2 (half-scale divider) -- INFERRED
+  DIVIDER_RATIO          = 3        ' pack = pin x 3 -- METERED 2026-06-01 (7.68 V pack, raw 131)
   LOW_BATTERY_CUTOFF_MV  = 6400     ' below this is low (Freenove auto-shutdown < 6.4 V)
   SAMPLE_COUNT           = 9        ' odd count so the median is a real sample
   MEDIAN_INDEX           = SAMPLE_COUNT / 2

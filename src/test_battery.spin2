@@ -1,0 +1,36 @@
+'' =================================================================================================
+''   File....... test_battery.spin2
+''   Purpose.... AUTO-RUN single-interface bring-up: battery voltage via ADS7830 (I2C 0x48).
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile -d). DEBUG @ 2 Mbaud. Reads pack voltage 6x (ADC ch0, x2 divider).
+'  Run: pnut-term-ts -r test_battery.bin -b 2000000 --headless --end-marker "TEST_DONE"
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_SCL     = 13
+  PIN_SDA     = 15
+  SAMPLES     = 6
+  PERIOD_MS   = 400
+
+OBJ
+  battery : "isp_battery_monitor"
+
+PUB main() | i, milliVolts, voltsX10
+    waitms(100)
+    DEBUG("=== battery test (ADS7830 @ 0x48) ===")
+    if battery.start(PIN_SCL, PIN_SDA) <> battery.SUCCESS
+        DEBUG("battery: ADS7830 NOT FOUND")
+    else
+        repeat i from 1 to SAMPLES
+            milliVolts := battery.batteryMilliVolts()
+            voltsX10   := battery.batteryVoltsTenths()
+            DEBUG("  ", udec_(i), ": ", udec_(milliVolts), " mV  (", udec_(voltsX10 / 10), ".", udec_(voltsX10 // 10), " V)")
+            waitms(PERIOD_MS)
+        if battery.isLowBattery()
+            DEBUG("  WARNING: below 6.4 V cutoff")
+    DEBUG("battery done")
+    DEBUG("TEST_DONE")
+    repeat

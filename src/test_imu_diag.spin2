@@ -1,0 +1,43 @@
+'' =================================================================================================
+''   File....... test_imu_diag.spin2
+''   Purpose.... DIAGNOSTIC: raw MPU6050 gyro immediately after start() vs after a settle delay.
+''               Tests the hypothesis that calibrateGyro() captures startup (~0) data -> bias=0.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_SCL     = 13
+  PIN_SDA     = 15
+
+OBJ
+  mpu : "isp_i2c_mpu6050"                                    ' chip driver, raw counts
+
+PUB main() | i, gx, gy, gz, sx, sy, sz
+    waitms(100)
+    DEBUG("=== IMU DIAG: raw gyro counts (still) ===")
+    if mpu.start(PIN_SCL, PIN_SDA) <> mpu.SUCCESS
+        DEBUG("MPU6050 NOT FOUND")
+        DEBUG("TEST_DONE")
+        repeat
+
+    DEBUG("-- IMMEDIATELY after start(), no settle (what calibrateGyro sees now) --")
+    repeat i from 1 to 8
+        gx, gy, gz := mpu.readGyroRaw()
+        DEBUG("  imm ", udec_(i), ": ", sdec_(gx), " ", sdec_(gy), " ", sdec_(gz))
+
+    DEBUG("-- after 200 ms settle --")
+    waitms(200)
+    sx := sy := sz := 0
+    repeat i from 1 to 8
+        gx, gy, gz := mpu.readGyroRaw()
+        sx += gx
+        sy += gy
+        sz += gz
+        DEBUG("  set ", udec_(i), ": ", sdec_(gx), " ", sdec_(gy), " ", sdec_(gz))
+    DEBUG("settled avg bias: ", sdec_(sx/8), " ", sdec_(sy/8), " ", sdec_(sz/8))
+
+    DEBUG("diag done")
+    DEBUG("TEST_DONE")
+    repeat

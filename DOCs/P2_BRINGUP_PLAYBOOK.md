@@ -26,11 +26,32 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 > **P9 through a ~1 kΩ inline series resistor** (the P2 pin clamps it to VIO, ≤ 10 mA); the
 > WS2812 data is 3.3 V into a 5 V part (usually fine). See `P2_MIGRATION_WIRING.md` §4.
 
-> **⚠ verify items.** Several constants are inferred from the Freenove code/datasheets, not
-> metered: ADC VREF + battery ÷2 divider (ex. 3), the WS2812 **strip variant** (ex. 6 — bit
-> timing now matches `jm_rgbx_pixel`; only WS2812 350/700 vs WS2812B 400/800 ns remains to
-> confirm), the leg↔channel↔side map and the CORDIC IK (ex. 10). Where an exercise proves one
-> of these, it is marked **⚠**; record the measured reality in the notes.
+> **⚠ verify items.** Some constants were inferred, not metered. **Resolved 2026-06-01:** the
+> battery divider is **÷3, not ÷2** (ex. 3 — metered 7.68 V → reads 7.76 V). **Still inferred:**
+> the WS2812 **strip variant** (ex. 6 — bit timing matches `jm_rgbx_pixel`; only WS2812 350/700 vs
+> WS2812B 400/800 ns remains), and the leg↔channel↔side map + CORDIC IK (ex. 10). Where an exercise
+> proves one of these, it is marked **⚠**; record the measured reality in the notes.
+
+---
+
+## Bring-up results — 2026-06-01 (non-motion interfaces)
+
+First pass done **not** via the menu console below but with per-interface **auto-run** top files
+(`src/test_*.spin2`) that emit P2 `DEBUG()` at 2 Mbaud and exit on `TEST_DONE` — driven headless:
+`pnut-ts -d -q src/test_X.spin2` then `pnut-term-ts -r src/test_X.bin -b 2000000 --headless
+--end-marker "TEST_DONE"`. **The `-b 2000000` is required** (headless does not auto-apply the debug
+baud to the runtime read; without it the 2 Mbaud DEBUG is garbage). Logs land in `logs/`.
+
+| Ex. | Interface | Result | Finding |
+|---|---|---|---|
+| 1 | Serial / DEBUG console | ✅ | DEBUG @ 2 Mbaud clean once `-b 2000000` passed. |
+| 2 | I²C bus scan | ✅ | 0x40, 0x48, 0x68 (+0x70 PCA9685 all-call). 3.3 V rail + `PU_1K5` confirmed. |
+| 3 | Battery | ✅ FIXED | Divider is **÷3** (was ÷2); 7.68 V metered → 7.76 V read. |
+| 4 | IMU | ✅ | Accel `az≈+1 g`, gyro `<0.25 deg/s` at rest after **hardened** `calibrateGyro` (motion-reject). |
+| 5 | Buzzer | ✅ | Audible **only with the Load/servo rail ON** (buzzer is on the Load rail). |
+| 6 | LED ring | ✅ | R/G/B (GRB) + rainbow, 7 px. |
+| 7 | Ultrasonic | ✅ | Tracks motion; **~1 kΩ series R into P9 fitted** (5 V echo via pin clamp). Load on. |
+| 8–10 | Servos / legs / head | ⏳ next | Center-only (90°), robot lifted, one leg at a time — *then* a calibration display. |
 
 ---
 

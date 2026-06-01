@@ -1,0 +1,43 @@
+'' =================================================================================================
+''   File....... test_i2c_scan.spin2
+''   Purpose.... AUTO-RUN single-interface bring-up: I2C bus identification (SCL=P13, SDA=P15).
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile -d). DEBUG @ 2 Mbaud. Probes every 7-bit address and reports
+'  which ACK. Expect: PCA9685 0x40, ADS7830 0x48, MPU6050 0x68 -> 3 devices.
+'  Run: pnut-term-ts -r test_i2c_scan.bin -b 2000000 --headless --end-marker "TEST_DONE"
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+
+  PIN_SCL         = 13
+  PIN_SDA         = 15
+  I2C_BUS_KHZ     = 100
+  RW_SHIFT        = 1                 ' 7-bit address -> 8-bit (add R/W bit)
+
+  I2C_SCAN_FIRST  = $08
+  I2C_SCAN_LAST   = $77
+
+  ADDR_PCA9685    = $40
+  ADDR_ADS7830    = $48
+  ADDR_MPU6050    = $68
+
+OBJ
+  i2c : "isp_i2c_singleton"
+
+PUB main() | addr7, foundCount
+    waitms(100)
+    DEBUG("=== I2C bus scan (SCL=P13 SDA=P15) ===")
+    DEBUG("expect 0x40 PCA9685, 0x48 ADS7830, 0x68 MPU6050")
+    i2c.setup(PIN_SCL, PIN_SDA, I2C_BUS_KHZ, i2c.PU_1K5)   ' board has no pull-ups -> P2 drives PU_1K5
+    foundCount := 0
+    repeat addr7 from I2C_SCAN_FIRST to I2C_SCAN_LAST
+        if i2c.present(addr7 << RW_SHIFT)
+            foundCount++
+            DEBUG("  found ", uhex_(addr7))
+        i2c.stop()
+    DEBUG("scan done, ", udec_(foundCount), " device(s)")
+    DEBUG("TEST_DONE")
+    repeat

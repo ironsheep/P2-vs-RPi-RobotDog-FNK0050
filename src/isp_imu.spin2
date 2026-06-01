@@ -17,8 +17,11 @@
    rate in milli-deg/s, or a coarse accelerometer tilt -- never raw counts.
 
    Robot Dog (FNK0050): defaults are +/-2g (16384 LSB/g) and +/-250 deg/s (131 LSB per deg/s),
-   matching Freenove IMU.py. calibrateGyro() captures the at-rest gyro bias the way Freenove's
-   average_filter() does.
+   matching Freenove IMU.py. calibrateGyro() captures the at-rest gyro bias, but -- unlike
+   Freenove's average_filter() -- it settles, paces its samples, and REJECTS any window whose
+   per-axis peak-to-peak spread shows the robot was moving (retrying up to CAL_MAX_ATTEMPTS).
+   Bring-up 2026-06-01 confirmed: held still, residual gyro is < 0.25 deg/s; the earlier 18-22
+   deg/s residual was hand-motion baked into the offset by the old unpaced loop.
 
    tiltDegrees() is a coarse accelerometer-only tilt (good for "is the body level?"), not a
    fused attitude. The Freenove Mahony+Kalman fusion (gyro+accel quaternion) is a separate,
@@ -27,17 +30,23 @@
 
 CON ' ---- status codes ----
   {Spin2_Doc_CON}
-  ' Operation results returned by start():
-  '  SUCCESS     - IMU present and configured
+  ' Operation results returned by start() / calibrateGyro():
+  '  SUCCESS     - IMU present and configured / a still calibration window was captured
   '  E_NO_DEVICE - the MPU6050 did not ACK
+  '  E_NOT_STILL - calibrateGyro() saw motion in every window (offsets set best-effort)
   SUCCESS     = 0
   E_NO_DEVICE = -1
+  E_NOT_STILL = -2
 
 CON ' ---- scaling & calibration ----
   ACCEL_LSB_PER_G    = 16384        ' +/-2g full scale: counts per g
   GYRO_LSB_PER_DPS   = 131          ' +/-250 deg/s full scale: counts per deg/s
   MILLI              = 1000         ' counts-to-milli-units multiplier
   CALIBRATE_SAMPLES  = 100          ' at-rest gyro-bias averaging count (matches Freenove)
+  CAL_SETTLE_MS        = 50         ' let the gyro stabilize after wake before sampling
+  CAL_SAMPLE_PERIOD_US = 2000       ' inter-sample pacing (~500 Hz) so we don't out-run the gyro ODR
+  CAL_MAX_ATTEMPTS     = 8          ' retry windows when motion is detected
+  CAL_MOTION_LSB       = 300        ' per-axis peak-to-peak limit (~2.3 deg/s); above => moving
   ' P2 CORDIC angle units: $1_0000_0000 = 360 deg, so units-per-degree = 2^32 / 360.
   ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (precomputed; 2^32 will not fit in a CON)
   DEGREES_PER_CIRCLE  = 360
@@ -77,28 +86,55 @@ PUB enableDebug(bEnable)
 
     bShowDebug := bEnable
 
-PUB calibrateGyro() | sampleIdx, sumGyroX, sumGyroY, sumGyroZ, gyroX, gyroY, gyroZ
-'' Capture the at-rest gyroscope bias (average of CALIBRATE_SAMPLES reads). Hold the robot still.
+PUB calibrateGyro() : status | attemptIdx, sampleIdx, gyroX, gyroY, gyroZ, refGyroX, refGyroY, refGyroZ, sumGyroX, sumGyroY, sumGyroZ, bMoved
+'' Capture the at-rest gyroscope bias, rejecting any window taken while the robot is moving.
 ''
+'' Settles the gyro, then averages CALIBRATE_SAMPLES paced reads. A window is accepted only if no
+'' sample deviates from the window's first sample by more than CAL_MOTION_LSB (still); otherwise it
+'' retries up to CAL_MAX_ATTEMPTS. Earlier bring-up baked hand-motion into the offset because the
+'' old loop sampled unpaced the instant after start() -- this guards against that. Hold robot still.
+''
+'' @returns status - SUCCESS if a still window was captured; E_NOT_STILL if every window saw
+''                   motion (offsets are still set from the last window, best-effort)
 
 ' Local Variables:
+' @local attemptIdx - calibration-window retry index
 ' @local sampleIdx - averaging loop index
-' @local sumGyroX - running sum of raw gyro X
-' @local sumGyroY - running sum of raw gyro Y
-' @local sumGyroZ - running sum of raw gyro Z
 ' @local gyroX - one raw gyro X sample
 ' @local gyroY - one raw gyro Y sample
 ' @local gyroZ - one raw gyro Z sample
+' @local refGyroX - this window's first gyro X sample (motion reference)
+' @local refGyroY - this window's first gyro Y sample
+' @local refGyroZ - this window's first gyro Z sample
+' @local sumGyroX - running sum of raw gyro X
+' @local sumGyroY - running sum of raw gyro Y
+' @local sumGyroZ - running sum of raw gyro Z
+' @local bMoved - TRUE if any sample deviated past CAL_MOTION_LSB this window
 
-    sumGyroX := sumGyroY := sumGyroZ := 0
-    repeat sampleIdx from 0 to CALIBRATE_SAMPLES - 1
-        gyroX, gyroY, gyroZ := mpu.readGyroRaw()
-        sumGyroX += gyroX
-        sumGyroY += gyroY
-        sumGyroZ += gyroZ
-    gyroOffsetX := sumGyroX / CALIBRATE_SAMPLES
-    gyroOffsetY := sumGyroY / CALIBRATE_SAMPLES
-    gyroOffsetZ := sumGyroZ / CALIBRATE_SAMPLES
+    waitms(CAL_SETTLE_MS)                                     ' let the gyro stabilize after wake
+    status := E_NOT_STILL
+    repeat attemptIdx from 1 to CAL_MAX_ATTEMPTS
+        refGyroX, refGyroY, refGyroZ := mpu.readGyroRaw()    ' window's motion reference + first sample
+        sumGyroX := refGyroX
+        sumGyroY := refGyroY
+        sumGyroZ := refGyroZ
+        bMoved := FALSE
+        repeat sampleIdx from 1 to CALIBRATE_SAMPLES - 1
+            waitus(CAL_SAMPLE_PERIOD_US)
+            gyroX, gyroY, gyroZ := mpu.readGyroRaw()
+            sumGyroX += gyroX
+            sumGyroY += gyroY
+            sumGyroZ += gyroZ
+            if (abs(gyroX - refGyroX) > CAL_MOTION_LSB) or (abs(gyroY - refGyroY) > CAL_MOTION_LSB) or (abs(gyroZ - refGyroZ) > CAL_MOTION_LSB)
+                bMoved := TRUE
+        gyroOffsetX := sumGyroX / CALIBRATE_SAMPLES           ' keep this window as best-effort offset
+        gyroOffsetY := sumGyroY / CALIBRATE_SAMPLES
+        gyroOffsetZ := sumGyroZ / CALIBRATE_SAMPLES
+        if not bMoved
+            status := SUCCESS                                 ' still enough -> accept this window
+            quit
+        if bShowDebug
+            term.fstr1(string("imu- cal attempt %d saw motion -- retry\r\n"), attemptIdx)
     if bShowDebug
         term.fstr3(string("imu- gyro bias x=%d y=%d z=%d\r\n"), gyroOffsetX, gyroOffsetY, gyroOffsetZ)
 

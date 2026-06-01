@@ -1,0 +1,11 @@
+CON
+  _clkfreq   = 200_000_000
+  DEBUG_BAUD = 2_000_000
+
+PUB main() | i
+    waitms(100)
+    repeat i from 1 to 8
+        DEBUG("HELLO ", udec_(i))
+        waitms(150)
+    DEBUG("TEST_DONE")
+    repeat

@@ -78,12 +78,12 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | `jm_nstr.spin2` | — | number formatting | **seed**; helper for the serial object |
 | `isp_i2c_pca9685.spin2` | 2 | PCA9685 @ `0x40` | **seed**; 16-ch PWM register driver |
 | `isp_i2c_pca9685_servo.spin2` | 3 | servo | **seed**; degrees/µSec, limits, slew ramp tables |
-| `isp_i2c_ads7830.spin2` | 2 | ADS7830 @ `0x48` | `readChannelRaw` / `readChannelMillivolts` (divider-agnostic). VREF ⚠ verify |
-| `isp_battery_monitor.spin2` | 3 | battery | 9-sample median, ÷2 divider undo, `isLowBattery` (<6.4 V) ⚠ verify |
+| `isp_i2c_ads7830.spin2` | 2 | ADS7830 @ `0x48` | `readChannelRaw` / `readChannelMillivolts` (divider-agnostic). VREF 5.0 V (consistent with the metered ÷3 battery) |
+| `isp_battery_monitor.spin2` | 3 | battery | 9-sample median, **÷3 divider** undo (METERED 2026-06-01), `isLowBattery` (<6.4 V) |
 | `isp_ws2812.spin2` | 1·2 | WS2812 strip (7 px) | inline-PASM, CT-paced fixed-cell + GRB buffer (dumb strip). Timing per jm_rgbx_pixel; confirm WS2812 vs B variant |
 | `isp_led_ring.spin2` | 3 | LED display modes | off/solid/wipe/chase/rainbow; `update()` steps one frame |
 | `isp_i2c_mpu6050.spin2` | 2 | MPU6050 @ `0x68` | wake + ±2g/±250°/s; burst-read accel/gyro raw |
-| `isp_imu.spin2` | 3 | attitude | accel milli-g, gyro milli-°/s, `calibrateGyro`, `tiltDegrees` (CORDIC). Mahony fusion = TODO |
+| `isp_imu.spin2` | 3 | attitude | accel milli-g, gyro milli-°/s, `calibrateGyro` (settle + paced + motion-reject → SUCCESS/E_NOT_STILL), `tiltDegrees` (CORDIC). Mahony fusion = TODO |
 | `isp_hcsr04.spin2` | 2·3 | HC-SR04 ultrasonic | polled trig/echo → mm/cm; smart-pin pulse measure = upgrade |
 | `isp_buzzer.spin2` | 2·3 | buzzer | active buzzer `on`/`off`/`beep` |
 | `isp_leg.spin2` | 3 | one leg (3 servos) | `init(side, ending)`, `setJointAngles`, `moveToXYZ` (CORDIC IK ⚠ verify) |
@@ -193,10 +193,10 @@ the concurrency model, the mailbox protocol, and the backend state machine are d
   3.3 V on-board.
 - **Keep I/O on P0–P57.** P58–P61 = boot flash, P62/P63 = serial/programming.
 
-Constants flagged `INFERRED` in the driver source (e.g. ADC `VREF`, the battery ÷2
-divider) were traced from Freenove code, **not** measured — meter before trusting. (WS2812
-bit timing is no longer inferred: it now matches `REF jm_rgbx_pixel`; only the strip variant
-needs confirming.)
+Constants once flagged `INFERRED` are being retired as hardware confirms them: the battery
+divider is now **METERED ÷3** (2026-06-01), not the ÷2 traced from Freenove code; WS2812 bit
+timing matches `REF jm_rgbx_pixel` (only the strip variant needs confirming). Still inferred:
+the leg↔channel↔side map and the per-joint servo trim (the next bring-up step).
 
 ---
 
@@ -217,11 +217,27 @@ Each driver is written so it compiles standalone (it is a valid top object even 
 `null()` notes "not a top-level object"). Objects using cooperative tasks must begin with
 the **`{Spin2_v47}`** version directive.
 
-To prove the drivers on real hardware, flash **`isp_dog_bringup.spin2`** — a top-level
-menu console that powers on one subsystem at a time and reports over the serial port (2 Mbaud,
-the project standard). Run it against the bench checklist in
-[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). The full-body
-`isp_robot_dog` integration (cog launch + frontend comms cog) is still **TODO**.
+### Proving drivers on hardware — `test_*.spin2` harnesses
+
+Each interface has a dedicated **auto-run** top file (`test_led`, `test_i2c_scan`, `test_buzzer`,
+`test_ping`, `test_battery`, `test_imu`, plus `test_smoke`) that brings up **one** driver, runs it
+for a bounded time, and emits P2 `DEBUG()` (no serial singleton, no menu, no keystrokes). Each
+declares `DEBUG_BAUD = 2_000_000`, is compiled with `-d`, and ends with `DEBUG("TEST_DONE")`:
+
+```bash
+pnut-ts -d -q src/test_i2c_scan.spin2                                       # build with DEBUG
+pnut-term-ts -r src/test_i2c_scan.bin -b 2000000 --headless \
+             --end-marker "TEST_DONE" --timeout 12                          # download-to-RAM, run, capture
+```
+
+> **`-b 2000000` is required.** In `--headless` mode `pnut-term-ts` opens the port at 115200 for the
+> *download* (fine, ignore it) but does **not** auto-apply the debug baud to the *runtime* read — so
+> 2 Mbaud `DEBUG` comes back as garbage unless you pass `-b 2000000`. Logs land in `logs/`.
+
+These were used for the 2026-06-01 bring-up (results: `../DOCs/P2_MIGRATION_WIRING.md` §7). The
+older menu console **`isp_dog_bringup.spin2`** still exists for interactive use against
+[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). The full-body `isp_robot_dog`
+integration (cog launch + frontend comms cog) is still **TODO**.
 
 `.bin` / `.lst` / `.obj` outputs are build artifacts — don't commit them.
 

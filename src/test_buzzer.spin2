@@ -1,0 +1,29 @@
+'' =================================================================================================
+''   File....... test_buzzer.spin2
+''   Purpose.... AUTO-RUN single-interface bring-up: buzzer (P10). No menu, no keypress.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile -d). DEBUG @ 2 Mbaud. Three short audible beeps.
+'  Run: pnut-term-ts -r test_buzzer.bin -b 2000000 --headless --end-marker "TEST_DONE"
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_BUZZER  = 10
+  BEEP_MS     = 150
+
+OBJ
+  buzzer : "isp_buzzer"
+
+PUB main() | i
+    waitms(100)
+    DEBUG("=== buzzer test (P10): 3 beeps ===")
+    buzzer.start(PIN_BUZZER)
+    repeat i from 1 to 3
+        DEBUG("  beep ", udec_(i))
+        buzzer.beep(BEEP_MS)
+        waitms(BEEP_MS)
+    DEBUG("buzzer done")
+    DEBUG("TEST_DONE")
+    repeat

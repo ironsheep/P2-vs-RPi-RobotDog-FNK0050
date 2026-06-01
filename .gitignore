@@ -240,3 +240,6 @@ REF/
 *.obj
 *.flash
 .pnut-cache/
+
+# pnut-term-ts headless run logs
+logs/

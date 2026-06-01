@@ -1,0 +1,52 @@
+'' =================================================================================================
+''   File....... isp_test_led.spin2
+''   Purpose.... AUTO-RUN single-interface bring-up: WS2812 LED ring (P8). No menu, no keypress.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile with -d for DEBUG). Emits "TEST_DONE" so a headless terminal
+'  exits on it. Sequence: solid RED, GREEN, BLUE (proves GRB order on 7 px), rainbow ~6 s, OFF.
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+  PIN_WS2812      = 8
+  TEST_RED        = $FF_00_00
+  TEST_GREEN      = $00_FF_00
+  TEST_BLUE       = $00_00_FF
+  SOLID_MS        = 1500
+  RAINBOW_FRAMES  = 120
+  RAINBOW_STEP_MS = 50
+
+OBJ
+  ring : "isp_led_ring"
+
+PUB main() | frame
+    waitms(50)
+    DEBUG("=== LED ring test (P8) ===")
+    ring.start(PIN_WS2812)
+
+    DEBUG("solid RED")
+    showSolid(TEST_RED)
+    DEBUG("solid GREEN")
+    showSolid(TEST_GREEN)
+    DEBUG("solid BLUE")
+    showSolid(TEST_BLUE)
+
+    DEBUG("rainbow...")
+    ring.setMode(ring.MODE_RAINBOW)
+    repeat frame from 1 to RAINBOW_FRAMES
+        ring.update()
+        waitms(RAINBOW_STEP_MS)
+
+    ring.setMode(ring.MODE_OFF)
+    ring.update()
+    DEBUG("ring off")
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI showSolid(rgb)
+    ring.setColor(rgb)
+    ring.setMode(ring.MODE_SOLID)
+    ring.update()
+    waitms(SOLID_MS)

@@ -1,0 +1,39 @@
+'' =================================================================================================
+''   File....... test_buzzer_diag.spin2
+''   Purpose.... DIAGNOSTIC: drive buzzer pin P10 directly (no driver obj) to localize silent buzzer.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Holds P10 HIGH 5 s (meter hdr pin 11 -> GND, expect ~3.3 V), LOW 2 s, then slow-toggles 1 Hz x8.
+'  An active buzzer should click/sound on the HIGH phases. Run:
+'    pnut-term-ts -r test_buzzer_diag.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 30
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_BUZZER  = 10
+
+PUB main() | i
+    waitms(100)
+    DEBUG("=== buzzer DIAG on P10 (direct pin drive) ===")
+
+    DEBUG("phase 1: P10 HIGH for 5 s -- meter hdr pin 11 vs GND, expect ~3.3 V")
+    pinh(PIN_BUZZER)
+    waitms(5000)
+
+    DEBUG("phase 2: P10 LOW for 2 s -- expect ~0 V")
+    pinl(PIN_BUZZER)
+    waitms(2000)
+
+    DEBUG("phase 3: slow toggle 1 Hz x8 (active buzzer should click each HIGH)")
+    repeat i from 1 to 8
+        pinh(PIN_BUZZER)
+        DEBUG("  P10 HIGH ", udec_(i))
+        waitms(500)
+        pinl(PIN_BUZZER)
+        waitms(500)
+
+    pinl(PIN_BUZZER)
+    DEBUG("diag done")
+    DEBUG("TEST_DONE")
+    repeat

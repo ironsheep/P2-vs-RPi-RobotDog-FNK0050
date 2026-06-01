@@ -1,0 +1,35 @@
+'' =================================================================================================
+''   File....... test_ping.spin2
+''   Purpose.... AUTO-RUN single-interface bring-up: HC-SR04 ultrasonic (TRIG=P11, ECHO=P9).
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile -d). DEBUG @ 2 Mbaud. Prints distance ~5x/s for ~15 s.
+'  HW: Load switch ON (ultrasonic is on the servo rail); ECHO is 5 V undivided -> ~1k series R into P9.
+'  Run: pnut-term-ts -r test_ping.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 20
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_ECHO    = 9
+  PIN_TRIG    = 11
+  SAMPLES     = 75
+  PERIOD_MS   = 200
+
+OBJ
+  sonic : "isp_hcsr04"
+
+PUB main() | i, distanceMm
+    waitms(100)
+    DEBUG("=== ultrasonic test (TRIG=P11 ECHO=P9) ===")
+    sonic.start(PIN_TRIG, PIN_ECHO)
+    repeat i from 1 to SAMPLES
+        distanceMm := sonic.readDistanceMm()
+        if distanceMm == sonic.NO_ECHO
+            DEBUG("  ", udec_(i), ": -- no echo --")
+        else
+            DEBUG("  ", udec_(i), ": ", sdec_(distanceMm), " mm")
+        waitms(PERIOD_MS)
+    DEBUG("ping done")
+    DEBUG("TEST_DONE")
+    repeat
