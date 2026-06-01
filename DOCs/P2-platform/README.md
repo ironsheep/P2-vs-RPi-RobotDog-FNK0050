@@ -20,6 +20,12 @@ bosses positioned to carry the P2 Edge breakout board:
   <img src="../Picture/p2-platform.png" width="75%" alt="Shapr3D CAD model of the P2 mount plate"/>
 </p>
 
+## How I developed the model
+
+So I'm a heavy Claude Code user, and I decided to try an experiment. The geometry and pin mounting points for the P2 Edge modules are well-known and publicly documented, as are the Raspberry Pi mounting holes. I asked Perplexity, in this case, to study and gather the mounting information (mounting hole sizes and locations), and then to overlay the two with the same orientation. I described how I wanted the platform to look, and then I had Perplexity give me the constraints for drawing it. Perplexity can't produce files, so it gave me the specification for the model file that I'd want. I copied that specification into Claude Code, and I said, "OK, now write the 2D design file that Shapr3D can read." It did that beautifully, and in fact, it did it in one pass. The first one was correct. I was able to use it.
+
+The next thing I did was import the file into Shapr3D and apply the standard extrusion techniques to create a 3D model. I printed some lightweight tests so I could prove that all the geometry was correct, and pleasantly so, the geometry was perfectly correct. I never had to move a hole placement. The only thing that might have been better is if the inner diameter of the standoffs had been narrower, so the screw could have threaded itself. As a result of not paying attention to that, I had to use nuts to hold the screws in place for the P2 Edge standoffs. Anyway, I thought this would be interesting for you to know. -Stephen
+
 ## Print progression
 
 Getting the standoff height and hole alignment right took a few iterations. The trick is to
