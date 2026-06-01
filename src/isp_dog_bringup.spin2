@@ -45,6 +45,8 @@ CON ' ---- I2C scan & expected devices ----
   ADDR_ADS7830   = $48
   ADDR_MPU6050   = $68
   RW_SHIFT       = 1                ' 7-bit address -> 8-bit (add R/W bit)
+  I2C_BUS_KHZ    = 100             ' bus speed for setup/scan
+  BUS_PULLUP_1K5 = 1               ' = isp_i2c_singleton.PU_1K5 (literal required in the OBJ override below)
 
 CON ' ---- test pacing & poses ----
   LIVE_PERIOD_MS  = 200             ' refresh period for live read-outs
@@ -62,7 +64,9 @@ OBJ
 
   term    : "isp_serial_singleton"
   i2c     : "isp_i2c_singleton"                              ' direct, for the bus scan
-  pca9685 : "isp_i2c_pca9685"                                ' shared servo controller
+  ' OBJ-override the seed's hard-coded PU_NONE -> PU_1K5 (board has no pull-ups + SDA pull-down),
+  ' so the seed uses PU_1K5 during its OWN setup/config -- without editing the backported seed.
+  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = BUS_PULLUP_1K5
   battery : "isp_battery_monitor"
   imu     : "isp_imu"
   buzzer  : "isp_buzzer"
@@ -114,7 +118,7 @@ PRI ensureController()
 ' Start and configure the shared PCA9685 once (needed before any servo test).
 
     if bControllerUp == FALSE
-        pca9685.start(PIN_SCL, PIN_SDA, PIN_OE_UNUSED)
+        pca9685.start(PIN_SCL, PIN_SDA, PIN_OE_UNUSED)       ' uses PU_1K5 via the OBJ override
         pca9685.configureController()
         bControllerUp := TRUE
 
@@ -126,7 +130,7 @@ PRI testBusScan() | addr7, foundCount
 ' @local foundCount - number of devices that answered
 
     term.fstr3(string("\r\n-- I2C scan (expect PCA9685 0x%.02x, ADS7830 0x%.02x, MPU6050 0x%.02x) --\r\n"), ADDR_PCA9685, ADDR_ADS7830, ADDR_MPU6050)
-    i2c.setup(PIN_SCL, PIN_SDA, 100, i2c.PU_NONE)
+    i2c.setup(PIN_SCL, PIN_SDA, I2C_BUS_KHZ, i2c.PU_1K5)     ' board has no pull-ups -> P2 drives them
     foundCount := 0
     repeat addr7 from I2C_SCAN_FIRST to I2C_SCAN_LAST
         if i2c.present(addr7 << RW_SHIFT)

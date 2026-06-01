@@ -202,7 +202,7 @@ robot's 5 V and tap to re-supply header pins 1/17.
 
 | Line | Direction | Risk | Action |
 |---|---|---|---|
-| **I²C SDA/SCL** | bidir | **No board pull-ups** (open to both rails); **SDA has a real ~6.9 kΩ pull-down to GND** (2026-05-31, §2). Bus is 3.3 V — no 5 V hazard | **P2 supplies the pull-ups** — use the strongest internal mode **`PU_1K5`** so SDA idles ~2.71 V over the pull-down (valid high; **`PU_3K3` ≈ 2.2 V → fails**). Seed `isp_i2c_pca9685` uses `PU_NONE` → **change to `PU_1K5`**. Optional external ~1 kΩ to 3.3 V for margin. |
+| **I²C SDA/SCL** | bidir | **No board pull-ups** (open to both rails); **SDA has a real ~6.9 kΩ pull-down to GND** (2026-05-31, §2). Bus is 3.3 V — no 5 V hazard | **P2 supplies the pull-ups** — use the strongest internal mode **`PU_1K5`** so SDA idles ~2.71 V over the pull-down (valid high; **`PU_3K3` ≈ 2.2 V → fails**). **Applied:** `isp_i2c_ads7830` / `isp_i2c_mpu6050` / the bring-up console set `PU_1K5`; the seed `isp_i2c_pca9685`'s `PU_NONE` is overridden to `PU_1K5` via a **Spin2 OBJ CON override** at the call site (no seed edit). Optional external ~1 kΩ to 3.3 V for margin. |
 | **Ultrasonic ECHO** | sensor→P2 | HC-SR04 echo = **5 V** (VCC measured 5 V, undivided) | **Fit a ~1 kΩ series R into P9** — the P2 pin clamps the 5 V to VIO (≤ 10 mA). Ultrasonic is powered only with the **Load/servo switch ON** (4-wire cable: GND/VCC/ECHO/TRIG) |
 | **Ultrasonic TRIG** | P2→sensor | P2 drives 3.3 V; HC-SR04 trigger threshold usually OK | Safe; if flaky, level-shift up to 5 V |
 | **Buzzer** | P2→board | Driving a transistor/driver from 3.3 V | Safe (output) |

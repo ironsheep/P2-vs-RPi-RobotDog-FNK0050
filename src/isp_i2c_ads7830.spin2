@@ -69,7 +69,9 @@ PUB start(pinSCL, pinSDA) : status
 '' @param pinSDA - I2C data (SDA) pin number
 '' @returns status - SUCCESS, or E_NO_DEVICE if the chip did not ACK
 
-    i2c_bus.setup(pinSCL, pinSDA, BUS_FREQ_KHZ, i2c_bus.PU_NONE)
+    ' PU_1K5: the connection board has NO I2C pull-ups (the Pi's left with it) and SDA carries a
+    ' ~6.9 kOhm pull-down -- the P2 must drive a strong pull-up. See DOCs/P2_MIGRATION_WIRING.md.
+    i2c_bus.setup(pinSCL, pinSDA, BUS_FREQ_KHZ, i2c_bus.PU_1K5)
     bDeviceFound := i2c_bus.present(ADS7830_ADDR | MODE_WRITE)
     i2c_bus.stop()                                            ' leave bus in a stable state
     status := (bDeviceFound) ? SUCCESS : E_NO_DEVICE
