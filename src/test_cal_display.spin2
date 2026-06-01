@@ -1,0 +1,107 @@
+{Spin2_v50}
+'' =================================================================================================
+''   File....... test_cal_display.spin2
+''   Purpose.... INCREMENT 1 of the servo-calibration DEBUG PLOT display: ONE joint (FL coxa, ch 4).
+''               Proves the pipeline -- PLOT window, BMP LAYER load, sprite CROP readout, pc_key
+''               input, and live servo drive -- before scaling to all 13 joints.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  INTERACTIVE (NOT headless): run in a windowed terminal so the PLOT window + keyboard work, e.g.
+'    pnut-ts -d -q src/test_cal_display.spin2
+'    cd src && pnut-term-ts -r test_cal_display.bin -b 2000000      # bare BMP names resolve here
+'  Assets (next to this file): cal_bg.bmp (480x240), cal_font.bmp (480x60). Regenerate with
+'  tools/gen_cal_assets.py. SAFETY: robot lifted; only ch 4 moves, center +/-30 deg (no extremes).
+'  Keys:  a = trim -1    d = trim +1    s = dump trim to DEBUG log.
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+
+  PIN_SCL         = 13
+  PIN_SDA         = 15
+  PIN_OE          = -1
+  PULLUP_1K5      = 1
+  CH_COXA         = 4                 ' FL coxa
+
+  CENTER_USEC     = 1500             ' 90 deg
+  USEC_SPAN       = 1400             ' 800..2200 us over...
+  DEG_SPAN        = 180             ' ...0..180 deg  -> us/deg = USEC_SPAN/DEG_SPAN
+  TRIM_MIN        = -30
+  TRIM_MAX        = 30
+
+  ' --- must match tools/gen_cal_assets.py ---
+  CELL_W          = 40
+  CELL_H          = 60
+  BOX_X           = 160
+  BOX_Y           = 90
+  BOX_W           = 140
+  BOX_H           = 64
+  SLOT_SIGN       = 170             ' 3 cells centered in the value box
+  SLOT_TENS       = 210
+  SLOT_ONES       = 250
+  DEST_Y          = 92
+  GLYPH_MINUS     = 10              ' font-cell index of '-'
+  GLYPH_PLUS      = 11             ' font-cell index of '+'
+
+OBJ
+  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+
+VAR
+  long  trim
+  long  keyCode
+
+PUB main()
+    waitms(100)
+    DEBUG("cal: bring up PCA9685, center FL coxa (ch 4); LIFT the robot")
+    if pca9685.start(PIN_SCL, PIN_SDA, PIN_OE) == FALSE
+        DEBUG("cal: PCA9685 NOT FOUND -- aborting")
+        repeat
+    pca9685.configureController()
+    trim := 0
+    applyTrim()                                              ' center ch 4
+    waitms(500)
+
+    setupWindow()
+    showTrim()
+    repeat
+        keyCode := 0
+        DEBUG(`cal `pc_key(@keyCode))                        ' poll host keyboard (LAST in stmt)
+        if keyCode <> 0
+            case keyCode
+                "a", "A": trim := TRIM_MIN #> (trim - 1)
+                "d", "D": trim := (trim + 1) <# TRIM_MAX
+                "s", "S": DEBUG("SAVE  FL coxa (ch 4) trim = ", sdec_(trim), " deg")
+            applyTrim()
+            showTrim()
+        waitms(30)
+
+PRI setupWindow()
+' Create the PLOT window (manual/double-buffered) and load the artwork layers.
+    DEBUG(`plot cal title 'P2 Cal' size 480 240 pos 400 200 hidexy update)
+    DEBUG(`cal layer 1 'cal_bg.bmp')
+    DEBUG(`cal layer 2 'cal_font.bmp')
+    DEBUG(`cal crop 1)                                       ' paint full background
+    DEBUG(`cal update)
+
+PRI applyTrim() | uSec
+' Drive FL coxa to (90 + trim) degrees.
+    uSec := CENTER_USEC + (trim * USEC_SPAN) / DEG_SPAN
+    pca9685.gotoMicroSec(CH_COXA, uSec)
+
+PRI showTrim() | absTrim
+' Erase the value box, then blit sign + (tens) + ones from the font layer, then flip.
+    absTrim := abs(trim)
+    DEBUG(`cal crop 1 160 90 140 64)                         ' erase value box (restore bg)
+    if trim < 0
+        blitGlyph(GLYPH_MINUS, SLOT_SIGN)
+    else
+        blitGlyph(GLYPH_PLUS, SLOT_SIGN)
+    if absTrim > 9
+        blitGlyph(absTrim / 10, SLOT_TENS)
+    blitGlyph(absTrim // 10, SLOT_ONES)
+    DEBUG(`cal update)
+
+PRI blitGlyph(glyphIdx, destX)
+' Copy one 40x60 font cell to (destX, DEST_Y) on the canvas.
+    DEBUG(`cal crop 2 `(glyphIdx * CELL_W, 0, CELL_W, CELL_H, destX, DEST_Y))

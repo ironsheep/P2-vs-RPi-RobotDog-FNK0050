@@ -241,5 +241,6 @@ REF/
 *.flash
 .pnut-cache/
 
-# pnut-term-ts headless run logs
+# pnut-term-ts run logs (headless logs/ and interactive src/logs/, perf logs)
 logs/
+*.log
