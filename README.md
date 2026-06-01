@@ -5,6 +5,12 @@
 ![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+One of the things I really enjoy doing is finding robotic platforms with a collection of servos and actuators and sensors that look like they'd be fun to control and might be a good challenge for me to expand my skills in programming the P2. When I find these platforms, I look at how they're set up and how compatible they might be. In this case, this was driven by a Raspberry Pi, so I know the interface is going to be pretty easy to adopt when it comes to taking out the Raspberry Pi and replacing it with a P2.
+
+This project is exactly that: the record of me doing this work of replacing a Pi with a P2 and then building the code around it. I built this so you can follow along and play and even use the code if you wish for experiments on your own. 
+
+-*Stephen*
+
 <p align="center">
   <img src='DOCs/Picture/fullbody-right.png' width='60%' alt='Freenove FNK0050 Robot Dog with the Parallax P2 Edge Module mounted where the Raspberry Pi used to sit'/>
 </p>
