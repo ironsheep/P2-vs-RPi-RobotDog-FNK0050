@@ -244,3 +244,5 @@ REF/
 # pnut-term-ts run logs (headless logs/ and interactive src/logs/, perf logs)
 logs/
 *.log
+src/pnut-term-settings.json
+src/tests/recordings/catalog.json
