@@ -1,0 +1,79 @@
+'' =================================================================================================
+''   File....... test_servo_center.spin2
+''   Purpose.... AUTO-RUN servo turn-on: drive every joint to CENTER (90 deg / 1500 us), one leg at
+''               a time, in a known order, so we confirm motors move and map leg<->channel.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  SAFETY: center-only (1500 us). NO extremes -- safe before per-joint calibration. LIFT/SUPPORT
+'  THE ROBOT: a 15 s countdown runs before the first move. Load/servo rail must be ON.
+'  Drives each leg's 3 channels directly via the PCA9685 (no IK, no mirror), order FL -> BL -> BR ->
+'  FR, then head (ch 15). Run:
+'    pnut-ts -d -q src/test_servo_center.spin2
+'    pnut-term-ts -r src/test_servo_center.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 60
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+
+  PIN_SCL         = 13
+  PIN_SDA         = 15
+  PIN_OE          = -1               ' PCA9685 /OE not driven by the P2
+  PULLUP_1K5      = 1                 ' = isp_i2c_pca9685.PU value for PU_1K5
+
+  CENTER_USEC     = 1500             ' DEFAULT_LIMIT_USEC_CTR -> 90 deg, mid travel (safe)
+  HEAD_CHANNEL    = 15
+  COUNTDOWN_S     = 15               ' time to lift the robot after download
+  JOINT_DWELL_MS  = 800             ' between the 3 joints of one leg
+  LEG_DWELL_MS    = 3500            ' observe each leg before the next
+
+OBJ
+  ' OBJ-override the seed's hard-coded PU_NONE -> PU_1K5 (board has no pull-ups), same as bring-up.
+  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+
+PUB main() | i
+    waitms(100)
+    DEBUG("=== SERVO CENTER test (center-only, one leg at a time) ===")
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. Load rail ON. Joints go to 90 deg (1500 us), no extremes. <<")
+
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  first move in ", udec_(i), " s ...")
+        waitms(1000)
+
+    if pca9685.start(PIN_SCL, PIN_SDA, PIN_OE) == FALSE
+        DEBUG("PCA9685 NOT FOUND at 0x40 -- aborting")
+        DEBUG("TEST_DONE")
+        repeat
+    pca9685.configureController()
+    DEBUG("PCA9685 configured (50 Hz). Centering...")
+
+    DEBUG("Leg 1/4 FRONT-LEFT : coxa=4  femur=3  tibia=2  -> 90 deg")
+    centerThree(4, 3, 2)
+    DEBUG("Leg 2/4 BACK-LEFT  : coxa=7  femur=6  tibia=5  -> 90 deg")
+    centerThree(7, 6, 5)
+    DEBUG("Leg 3/4 BACK-RIGHT : coxa=8  femur=9  tibia=10 -> 90 deg")
+    centerThree(8, 9, 10)
+    DEBUG("Leg 4/4 FRONT-RIGHT: coxa=11 femur=12 tibia=13 -> 90 deg")
+    centerThree(11, 12, 13)
+
+    DEBUG("HEAD ch=15 -> 90 deg")
+    pca9685.gotoMicroSec(HEAD_CHANNEL, CENTER_USEC)
+    waitms(LEG_DWELL_MS)
+
+    DEBUG("all joints centered")
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI centerThree(coxaCh, femurCh, tibiaCh)
+' Drive the 3 joints of one leg to center, one channel at a time (limits inrush, easy to watch).
+'
+' @param coxaCh - PCA9685 channel for the coxa joint
+' @param femurCh - PCA9685 channel for the femur joint
+' @param tibiaCh - PCA9685 channel for the tibia joint
+
+    pca9685.gotoMicroSec(coxaCh, CENTER_USEC)
+    waitms(JOINT_DWELL_MS)
+    pca9685.gotoMicroSec(femurCh, CENTER_USEC)
+    waitms(JOINT_DWELL_MS)
+    pca9685.gotoMicroSec(tibiaCh, CENTER_USEC)
+    waitms(LEG_DWELL_MS)

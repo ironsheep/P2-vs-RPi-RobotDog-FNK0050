@@ -72,7 +72,9 @@ Authoritative table + rationale: `DOCs/P2_MIGRATION_WIRING.md` §3.
 | P15 | 3 | I²C SDA |
 
 Servo channel map (PCA9685 PWM channels, **not** Pi GPIO): ch 2–13 are the four legs
-(3 joints each), ch 15 is the head-pan servo; angle 0–180° → count 102–512.
+(3 joints each), ch 15 is the head-pan servo; angle 0–180° → count 102–512. **Verified on hardware
+2026-06-01:** FL=4/3/2, BL=7/6/5, BR=8/9/10, FR=11/12/13, head=15. (PCA9685 needed a wake-from-SLEEP
+fix in `isp_i2c_pca9685` before any servo would drive.)
 
 ### Critical electrical gotchas
 

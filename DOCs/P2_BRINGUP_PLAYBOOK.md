@@ -27,10 +27,11 @@ dependency-first (bus before the chips that ride it, sensors before actuators).
 > WS2812 data is 3.3 V into a 5 V part (usually fine). See `P2_MIGRATION_WIRING.md` §4.
 
 > **⚠ verify items.** Some constants were inferred, not metered. **Resolved 2026-06-01:** the
-> battery divider is **÷3, not ÷2** (ex. 3 — metered 7.68 V → reads 7.76 V). **Still inferred:**
-> the WS2812 **strip variant** (ex. 6 — bit timing matches `jm_rgbx_pixel`; only WS2812 350/700 vs
-> WS2812B 400/800 ns remains), and the leg↔channel↔side map + CORDIC IK (ex. 10). Where an exercise
-> proves one of these, it is marked **⚠**; record the measured reality in the notes.
+> battery divider is **÷3, not ÷2** (ex. 3 — metered 7.68 V → reads 7.76 V). The **leg↔channel
+> map is verified** (ex. 8–10, 2026-06-01). **Still inferred:** the WS2812 **strip variant** (ex. 6
+> — bit timing matches `jm_rgbx_pixel`; only WS2812 350/700 vs WS2812B 400/800 ns remains), and the
+> joint **side-mirror + CORDIC IK** (ex. 10, validate through motion). Where an exercise proves one
+> of these, it is marked **⚠**; record the measured reality in the notes.
 
 ---
 
@@ -51,7 +52,7 @@ baud to the runtime read; without it the 2 Mbaud DEBUG is garbage). Logs land in
 | 5 | Buzzer | ✅ | Audible **only with the Load/servo rail ON** (buzzer is on the Load rail). |
 | 6 | LED ring | ✅ | R/G/B (GRB) + rainbow, 7 px. |
 | 7 | Ultrasonic | ✅ | Tracks motion; **~1 kΩ series R into P9 fitted** (5 V echo via pin clamp). Load on. |
-| 8–10 | Servos / legs / head | ⏳ next | Center-only (90°), robot lifted, one leg at a time — *then* a calibration display. |
+| 8–10 | Servos / legs / head | ✅ | **PCA9685 wake bug fixed** (MODE1 SLEEP never cleared → no PWM); all 13 servos center & hold. **Leg map verified**: FL=4/3/2, BL=7/6/5, BR=8/9/10, FR=11/12/13, head=15. FL/BR toes need a small tibia trim (calibration). |
 
 ---
 

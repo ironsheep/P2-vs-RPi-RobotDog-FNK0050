@@ -286,9 +286,15 @@ method and `src/README.md` §7 for the run recipe). Discrete-pin and bus facts c
 | IMU (MPU6050) | I²C | ✅ PASS | Accel `az≈+1 g` level; gyro `<0.25 deg/s` at rest after the hardened `calibrateGyro` (settle + pacing + motion-reject). |
 | Battery (ADS7830) | I²C ch0 | ✅ FIXED | **Divider is ÷3, not ÷2** — metered 7.68 V pack reads 7.76 V (`DIVIDER_RATIO = 3`). |
 
-Servo/motion bring-up (PCA9685 ch 2–13 legs, ch 15 head) is the **next** step: center-only
-(90°/1500 µs), robot lifted, one leg at a time — never command extremes until per-joint trim is
-calibrated.
+**Servo turn-on — ✅ PASS (2026-06-01).** Required a firmware fix: `isp_i2c_pca9685` never cleared
+the MODE1 **SLEEP** bit in its wake step — `!(MODE1_SLEEP & MODE1_RESTART)` ANDs two distinct bits
+→ `0` → the mask was a no-op, so the chip ACKed but produced **no PWM**. Fixed (`&` → `|` so it
+masks off both bits); all **13 servos now energize and hold at center** (90°/1500 µs). The
+**leg↔channel map is verified correct** — FL=4/3/2, BL=7/6/5, BR=8/9/10, FR=11/12/13, head=15
+(each commanded leg moved the matching physical leg). **Calibration note:** at center the **FL and
+BR toes sit slightly lower** than the others → a small tibia trim is needed for the {FL,BR}
+diagonal (the upcoming calibration step). Harnesses: `src/test_servo_center.spin2`,
+`src/test_servo_wiggle.spin2`.
 
 ---
 

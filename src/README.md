@@ -118,8 +118,10 @@ role from that identity.
   leg's calibration → 3 servo writes). The **body coordinator** (`isp_robot_dog`) generates
   per-leg target coordinates for gaits/poses and calls each leg.
 
-> ⚠️ The FL/BL/BR/FR ↔ channel ↔ side assignment is **inferred from the Freenove gait +
-> transform logic**, not metered. Verify on hardware before trusting (CLAUDE.md rule).
+> ✅ The FL/BL/BR/FR ↔ channel assignment is **verified on hardware 2026-06-01** — each commanded
+> leg moved the matching physical leg (FL=4/3/2, BL=7/6/5, BR=8/9/10, FR=11/12/13, head=15). The
+> joint-angle **side mirror** and the **CORDIC IK** still need validation through motion (the
+> calibration step). Note: at center the FL/BR toes sit slightly low → small tibia trim pending.
 
 Head is a single DOF (PCA9685 **ch 15**, center ≈ 90°, ~50–130°). `isp_head` is intentionally
 thin — it earns its keep as the mount point for the future head-pan + ultrasonic scan.
@@ -195,8 +197,9 @@ the concurrency model, the mailbox protocol, and the backend state machine are d
 
 Constants once flagged `INFERRED` are being retired as hardware confirms them: the battery
 divider is now **METERED ÷3** (2026-06-01), not the ÷2 traced from Freenove code; WS2812 bit
-timing matches `REF jm_rgbx_pixel` (only the strip variant needs confirming). Still inferred:
-the leg↔channel↔side map and the per-joint servo trim (the next bring-up step).
+timing matches `REF jm_rgbx_pixel` (only the strip variant needs confirming); the **leg↔channel
+map is verified** (2026-06-01). Still to validate through motion: the joint side-mirror, the CORDIC
+IK, and per-joint servo trim (the calibration step).
 
 ---
 
@@ -220,7 +223,8 @@ the **`{Spin2_v47}`** version directive.
 ### Proving drivers on hardware — `test_*.spin2` harnesses
 
 Each interface has a dedicated **auto-run** top file (`test_led`, `test_i2c_scan`, `test_buzzer`,
-`test_ping`, `test_battery`, `test_imu`, plus `test_smoke`) that brings up **one** driver, runs it
+`test_ping`, `test_battery`, `test_imu`, `test_servo_center`, `test_servo_wiggle`, plus `test_smoke`)
+that brings up **one** driver, runs it
 for a bounded time, and emits P2 `DEBUG()` (no serial singleton, no menu, no keystrokes). Each
 declares `DEBUG_BAUD = 2_000_000`, is compiled with `-d`, and ends with `DEBUG("TEST_DONE")`:
 

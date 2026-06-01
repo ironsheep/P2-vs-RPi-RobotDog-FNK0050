@@ -1,0 +1,91 @@
+'' =================================================================================================
+''   File....... test_servo_wiggle.spin2
+''   Purpose.... AUTO-RUN: center all servos, then VISIBLY wiggle each leg around center, one leg at
+''               a time, in a known order -- confirms motion and maps leg<->channel.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  SAFETY: stays within ~71..109 deg (1350..1650 us) -- nowhere near the extremes. LIFT/SUPPORT the
+'  robot; 15 s countdown before motion. Load/servo rail ON. Order FL -> BL -> BR -> FR, then head.
+'  Run: pnut-ts -d -q src/test_servo_wiggle.spin2
+'       pnut-term-ts -r src/test_servo_wiggle.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 70
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+
+  PIN_SCL         = 13
+  PIN_SDA         = 15
+  PIN_OE          = -1
+  PULLUP_1K5      = 1
+
+  CENTER_USEC     = 1500             ' 90 deg
+  LO_USEC         = 1350             ' ~71 deg
+  HI_USEC         = 1650             ' ~109 deg
+  HEAD_CHANNEL    = 15
+
+  COUNTDOWN_S     = 15
+  MOVE_MS         = 450             ' time at each wiggle extreme
+  WIGGLE_CYCLES   = 2
+  LEG_DWELL_MS    = 1500            ' settle at center between legs
+
+OBJ
+  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+
+PUB main() | i
+    waitms(100)
+    DEBUG("=== SERVO WIGGLE / leg-map test (safe +/-19 deg around center) ===")
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. Load rail ON. <<")
+
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  first move in ", udec_(i), " s ...")
+        waitms(1000)
+
+    if pca9685.start(PIN_SCL, PIN_SDA, PIN_OE) == FALSE
+        DEBUG("PCA9685 NOT FOUND at 0x40 -- aborting")
+        DEBUG("TEST_DONE")
+        repeat
+    pca9685.configureController()
+    pca9685.setAllServos(CENTER_USEC)                        ' all to 90 first
+    DEBUG("all centered; wiggling each leg in turn...")
+    waitms(LEG_DWELL_MS)
+
+    DEBUG("Leg 1/4 FRONT-LEFT : coxa=4  femur=3  tibia=2")
+    wiggleThree(4, 3, 2)
+    DEBUG("Leg 2/4 BACK-LEFT  : coxa=7  femur=6  tibia=5")
+    wiggleThree(7, 6, 5)
+    DEBUG("Leg 3/4 BACK-RIGHT : coxa=8  femur=9  tibia=10")
+    wiggleThree(8, 9, 10)
+    DEBUG("Leg 4/4 FRONT-RIGHT: coxa=11 femur=12 tibia=13")
+    wiggleThree(11, 12, 13)
+
+    DEBUG("HEAD ch=15 pan wiggle")
+    wiggleOne(HEAD_CHANNEL)
+
+    DEBUG("done; all returned to center")
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI wiggleThree(coxaCh, femurCh, tibiaCh) | n
+' Oscillate all three joints of one leg around center, then return to center.
+    repeat n from 1 to WIGGLE_CYCLES
+        setThree(coxaCh, femurCh, tibiaCh, HI_USEC)
+        waitms(MOVE_MS)
+        setThree(coxaCh, femurCh, tibiaCh, LO_USEC)
+        waitms(MOVE_MS)
+    setThree(coxaCh, femurCh, tibiaCh, CENTER_USEC)
+    waitms(LEG_DWELL_MS)
+
+PRI setThree(coxaCh, femurCh, tibiaCh, uSec)
+    pca9685.gotoMicroSec(coxaCh, uSec)
+    pca9685.gotoMicroSec(femurCh, uSec)
+    pca9685.gotoMicroSec(tibiaCh, uSec)
+
+PRI wiggleOne(channel) | n
+    repeat n from 1 to WIGGLE_CYCLES
+        pca9685.gotoMicroSec(channel, HI_USEC)
+        waitms(MOVE_MS)
+        pca9685.gotoMicroSec(channel, LO_USEC)
+        waitms(MOVE_MS)
+    pca9685.gotoMicroSec(channel, CENTER_USEC)
+    waitms(LEG_DWELL_MS)
