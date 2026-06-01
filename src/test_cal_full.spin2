@@ -1,0 +1,213 @@
+{Spin2_v50}
+'' =================================================================================================
+''   File....... test_cal_full.spin2
+''   Purpose.... Full servo-calibration DEBUG PLOT panel: navigate all 13 joints, trim each with a
+''               selectable step, center-all, and dump the table to the log (ASCII only).
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  INTERACTIVE (NOT headless) -- run in a windowed terminal so the PLOT window + keyboard work:
+'    pnut-ts -d -q src/test_cal_full.spin2
+'    cd src && pnut-term-ts -r test_cal_full.bin -b 2000000        # bare BMP names resolve here
+'  Assets (tools/gen_cal_assets.py): panel_bg.bmp, cal_font.bmp, panel_legs.bmp, panel_joints.bmp.
+'  SAFETY: robot lifted; trims clamp to +/-45 deg (no extremes).
+'
+'  Keys:  a/d = down/up by STEP    1 = step 1 deg    5 = step 5 deg
+'         j = next joint    l = next leg    c = center ALL (zero all trims)
+'         s = dump this joint    p = dump ALL (read back from src/logs/debug_*.log)
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+
+  PIN_SCL         = 13
+  PIN_SDA         = 15
+  PIN_OE          = -1
+  PULLUP_1K5      = 1
+
+  CENTER_USEC     = 1500
+  USEC_SPAN       = 1400            ' 800..2200 us across 0..180 deg
+  DEG_SPAN        = 180
+  TRIM_MIN        = -45
+  TRIM_MAX        = 45
+  STEP_FINE       = 1
+  STEP_COARSE     = 5
+
+  NUM_LEGS        = 5              ' FL, BL, BR, FR, HEAD
+  SLOTS_PER_LEG   = 3             ' flat index = leg*3 + joint
+  HEAD_LEG        = 4
+
+  ' ---- layout (MUST match tools/gen_cal_assets.py output) ----
+  PANEL_W = 480
+  PANEL_H = 288
+  LEG_CELL_W = 220
+  LEG_CELL_H = 30
+  JNT_CELL_W = 170
+  JNT_CELL_H = 30
+  LEG_SLOT_X = 28
+  LEG_SLOT_Y = 48
+  JNT_SLOT_X = 264
+  JNT_SLOT_Y = 48
+  PBOX_X = 160
+  PBOX_Y = 100
+  PBOX_W = 140
+  PBOX_H = 64
+  PSLOT_SIGN = 170
+  PSLOT_TENS = 210
+  PSLOT_ONES = 250
+  PDIG_Y = 102
+  STEP_DIG_X = 252
+  STEP_DIG_Y = 180
+  CELL_W = 40
+  CELL_H = 60
+  GLYPH_MINUS = 10
+  GLYPH_PLUS  = 11
+  JNAME_PAN   = 3                 ' joint-name strip row for HEAD's single joint
+
+OBJ
+  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+
+VAR
+  long  legIdx
+  long  jntIdx
+  long  stepDeg
+  long  keyCode
+  long  trims[NUM_LEGS * SLOTS_PER_LEG]
+
+DAT ' ---- channel map (verified 2026-06-01): leg*3 + joint; -1 = no joint ----
+  chan  long  4, 3, 2,   7, 6, 5,   8, 9, 10,   11, 12, 13,   15, -1, -1
+
+PUB main()
+    waitms(100)
+    DEBUG("cal: bring up PCA9685; LIFT the robot (all 13 servos go to center+trim)")
+    if pca9685.start(PIN_SCL, PIN_SDA, PIN_OE) == FALSE
+        DEBUG("cal: PCA9685 NOT FOUND -- aborting")
+        repeat
+    pca9685.configureController()
+    legIdx := 0
+    jntIdx := 0
+    stepDeg := STEP_FINE
+    driveAll()                                              ' all joints to center+trim (trims=0)
+    waitms(300)
+
+    setupWindow()
+    showStep()
+    showNameAndValue()
+    repeat
+        keyCode := 0
+        DEBUG(`cal `pc_key(@keyCode))                        ' poll host keyboard (LAST in stmt)
+        if keyCode <> 0
+            case keyCode
+                "a", "A": adjust(-stepDeg)
+                "d", "D": adjust(stepDeg)
+                "1":      setStep(STEP_FINE)
+                "5":      setStep(STEP_COARSE)
+                "j", "J": nextJoint()
+                "l", "L": nextLeg()
+                "c", "C": centerAll()
+                "s", "S": dumpOne()
+                "p", "P": dumpAll()
+        waitms(25)
+
+PRI curIndex() : idx
+    idx := legIdx * SLOTS_PER_LEG + jntIdx
+
+PRI jointCount() : cnt
+    cnt := (legIdx == HEAD_LEG) ? 1 : SLOTS_PER_LEG
+
+PRI adjust(deltaDeg) | idx
+    idx := curIndex()
+    trims[idx] := TRIM_MIN #> (trims[idx] + deltaDeg) <# TRIM_MAX
+    driveCur()
+    showValue()
+
+PRI setStep(newStep)
+    stepDeg := newStep
+    showStep()
+
+PRI centerAll() | idx
+    repeat idx from 0 to (NUM_LEGS * SLOTS_PER_LEG) - 1
+        trims[idx] := 0
+    driveAll()
+    DEBUG("cal: centered ALL (all trims = 0)")
+    showValue()
+
+PRI nextJoint()
+    jntIdx := (jntIdx + 1) // jointCount()
+    showNameAndValue()
+
+PRI nextLeg()
+    legIdx := (legIdx + 1) // NUM_LEGS
+    jntIdx := 0
+    showNameAndValue()
+
+PRI driveCur() | ch
+    ch := long[@chan][curIndex()]
+    if ch >= 0
+        pca9685.gotoMicroSec(ch, CENTER_USEC + (trims[curIndex()] * USEC_SPAN) / DEG_SPAN)
+
+PRI driveAll() | idx, ch
+    repeat idx from 0 to (NUM_LEGS * SLOTS_PER_LEG) - 1
+        ch := long[@chan][idx]
+        if ch >= 0
+            pca9685.gotoMicroSec(ch, CENTER_USEC + (trims[idx] * USEC_SPAN) / DEG_SPAN)
+
+PRI setupWindow()
+    DEBUG(`plot cal title 'P2 Servo Cal' size 480 288 pos 380 150 hidexy update)
+    DEBUG(`cal layer 1 'panel_bg.bmp')
+    DEBUG(`cal layer 2 'cal_font.bmp')
+    DEBUG(`cal layer 3 'panel_legs.bmp')
+    DEBUG(`cal layer 4 'panel_joints.bmp')
+    DEBUG(`cal crop 1)
+    DEBUG(`cal update)
+
+PRI showNameAndValue()
+' Blit current leg + joint name, then the value box -- one UPDATE flips them together.
+    DEBUG(`cal crop 3 `(0, legIdx * LEG_CELL_H, LEG_CELL_W, LEG_CELL_H, LEG_SLOT_X, LEG_SLOT_Y))
+    DEBUG(`cal crop 4 `(0, jointNameRow() * JNT_CELL_H, JNT_CELL_W, JNT_CELL_H, JNT_SLOT_X, JNT_SLOT_Y))
+    showValue()
+
+PRI jointNameRow() : row
+    row := (legIdx == HEAD_LEG) ? JNAME_PAN : jntIdx
+
+PRI showValue() | absTrim
+    absTrim := abs(trims[curIndex()])
+    DEBUG(`cal crop 1 `(PBOX_X, PBOX_Y, PBOX_W, PBOX_H))     ' erase value box (restore bg)
+    if trims[curIndex()] < 0
+        blitGlyph(GLYPH_MINUS, PSLOT_SIGN)
+    else
+        blitGlyph(GLYPH_PLUS, PSLOT_SIGN)
+    if absTrim > 9
+        blitGlyph(absTrim / 10, PSLOT_TENS)
+    blitGlyph(absTrim // 10, PSLOT_ONES)
+    DEBUG(`cal update)
+
+PRI showStep()
+' Blit the current step digit (1 or 5) into the step box, then flip.
+    DEBUG(`cal crop 2 `(stepDeg * CELL_W, 0, CELL_W, CELL_H, STEP_DIG_X, STEP_DIG_Y))
+    DEBUG(`cal update)
+
+PRI blitGlyph(glyphIdx, destX)
+    DEBUG(`cal crop 2 `(glyphIdx * CELL_W, 0, CELL_W, CELL_H, destX, PDIG_Y))
+
+PRI dumpOne() | ch
+    ch := long[@chan][curIndex()]
+    DEBUG("CAL ch=", sdec_(ch), " trim=", sdec_(trims[curIndex()]), " deg")
+
+PRI dumpAll()
+' ASCII-only table -- read back from src/logs/debug_*.log and bake into isp_calibration.
+    DEBUG("=== CALDUMP begin ===")
+    DEBUG("  FL shoulder ch=4  trim=", sdec_(trims[0]), " deg")
+    DEBUG("  FL thigh    ch=3  trim=", sdec_(trims[1]), " deg")
+    DEBUG("  FL knee     ch=2  trim=", sdec_(trims[2]), " deg")
+    DEBUG("  BL shoulder ch=7  trim=", sdec_(trims[3]), " deg")
+    DEBUG("  BL thigh    ch=6  trim=", sdec_(trims[4]), " deg")
+    DEBUG("  BL knee     ch=5  trim=", sdec_(trims[5]), " deg")
+    DEBUG("  BR shoulder ch=8  trim=", sdec_(trims[6]), " deg")
+    DEBUG("  BR thigh    ch=9  trim=", sdec_(trims[7]), " deg")
+    DEBUG("  BR knee     ch=10 trim=", sdec_(trims[8]), " deg")
+    DEBUG("  FR shoulder ch=11 trim=", sdec_(trims[9]), " deg")
+    DEBUG("  FR thigh    ch=12 trim=", sdec_(trims[10]), " deg")
+    DEBUG("  FR knee     ch=13 trim=", sdec_(trims[11]), " deg")
+    DEBUG("  HEAD pan    ch=15 trim=", sdec_(trims[12]), " deg")
+    DEBUG("=== CALDUMP end ===")

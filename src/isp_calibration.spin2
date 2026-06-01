@@ -1,0 +1,97 @@
+'' =================================================================================================
+''
+''   File....... isp_calibration.spin2
+''   Purpose.... Per-joint servo trim offsets (degrees) for THIS physical robot -- the values that
+''               make a commanded neutral land at the true mechanical neutral.
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... June 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   These offsets were METERED 2026-06-01 with src/test_cal_full.spin2 (the DEBUG PLOT calibration
+   panel): each joint was driven from center (90 deg / 1500 us) and nudged until the legs matched,
+   then the table was dumped to the log. A trim is in SERVO-angle degrees, the same space as
+   isp_leg.setCalibration() -- so a caller applies them straight after isp_leg.init():
+
+      leg.init(SIDE_LEFT, END_FRONT)
+      coxaT, femurT, tibiaT := cal.legTrims(SIDE_LEFT, END_FRONT)
+      leg.setCalibration(coxaT, femurT, tibiaT)
+
+   Re-run the panel and re-dump whenever a servo horn is re-seated; paste the new numbers here.
+   Joint names: shoulder = coxa, thigh = femur, knee = tibia.
+}
+
+CON ' ---- leg identity (must match isp_leg) ----
+  {Spin2_Doc_CON}
+  #0, SIDE_LEFT, SIDE_RIGHT
+  #0, END_FRONT, END_BACK
+  JOINTS_PER_LEG  = 3
+  HEAD_TRIM_DEG   = -5             ' head-pan center trim (PCA9685 ch 15)
+
+DAT ' ---- per-joint servo trims, degrees (METERED 2026-06-01) ----
+  ' index = (side*2 + ending) * 3, then [coxa, femur, tibia] = [shoulder, thigh, knee]
+  legTrim   long  -23, -22,  -4    ' [0] LEFT  FRONT (FL) ch 4/3/2
+            long   -2,   0,  -5    ' [1] LEFT  BACK  (BL) ch 7/6/5
+            long  -11, -19, -16    ' [2] RIGHT FRONT (FR) ch 11/12/13
+            long   -5,   0, -10    ' [3] RIGHT BACK  (BR) ch 8/9/10
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB legTrims(side, ending) : coxaDeg, femurDeg, tibiaDeg | base
+'' Return the three servo-angle trim offsets (degrees) for one leg.
+''
+'' @param side - SIDE_LEFT or SIDE_RIGHT
+'' @param ending - END_FRONT or END_BACK
+'' @returns coxaDeg - shoulder trim, degrees
+'' @returns femurDeg - thigh trim, degrees
+'' @returns tibiaDeg - knee trim, degrees
+
+' Local Variables:
+' @local base - first index of this leg's 3-entry block
+
+    base := (side * 2 + ending) * JOINTS_PER_LEG
+    coxaDeg  := long[@legTrim][base]
+    femurDeg := long[@legTrim][base + 1]
+    tibiaDeg := long[@legTrim][base + 2]
+
+PUB headTrim() : panDeg
+'' Return the head-pan center trim, degrees.
+''
+'' @returns panDeg - head-pan trim (added to HEAD_CENTER_DEG)
+
+    panDeg := HEAD_TRIM_DEG
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}
