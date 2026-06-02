@@ -72,6 +72,7 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
 CON ' ---- runtime ----
   TASK_STACK_LONGS      = 64        ' per-task cooperative stack
   BATTERY_READ_PASSES   = 50        ' senseTask passes between battery reads
+  LOW_BATT_CONSECUTIVE  = 3         ' consecutive LOW battery readings before forcing rest (ignore inrush sags)
   PIN_OE_UNUSED         = -1        ' PCA9685 /OE not driven by the P2 (tied on the board)
 
 OBJ
@@ -84,6 +85,7 @@ OBJ
   head    : "isp_head"
   imu     : "isp_imu"
   battery : "isp_battery_monitor"
+  cal     : "isp_calibration"                                ' per-joint servo trims (this robot)
   term    : "isp_serial_singleton"                           ' debug terminal output
 
 DAT ' ---- command mailbox (frontend cog writes, backend cog reads) ----
@@ -112,6 +114,7 @@ DAT ' ---- internal control state (backend cog only) ----
   gesturePhase     LONG  0
   bLowBattLatched  BYTE  FALSE
   bShowDebug       BYTE  FALSE
+  lowBattReadings  LONG  0                                    ' consecutive low battery readings
   motionStack      LONG  0[TASK_STACK_LONGS]
   senseStack       LONG  0[TASK_STACK_LONGS]
 
@@ -130,9 +133,13 @@ PUB start(pinSCL, pinSDA)
     pca9685.configureController()
 
     flLeg.init(flLeg.SIDE_LEFT,  flLeg.END_FRONT)            ' assign each leg its channels + mirror
+    flLeg.setCalibration(cal.legTrims(flLeg.SIDE_LEFT,  flLeg.END_FRONT))
     blLeg.init(blLeg.SIDE_LEFT,  blLeg.END_BACK)
+    blLeg.setCalibration(cal.legTrims(blLeg.SIDE_LEFT,  blLeg.END_BACK))
     frLeg.init(frLeg.SIDE_RIGHT, frLeg.END_FRONT)
+    frLeg.setCalibration(cal.legTrims(frLeg.SIDE_RIGHT, frLeg.END_FRONT))
     brLeg.init(brLeg.SIDE_RIGHT, brLeg.END_BACK)
+    brLeg.setCalibration(cal.legTrims(brLeg.SIDE_RIGHT, brLeg.END_BACK))
     head.start()
 
     imu.start(pinSCL, pinSDA)                                ' sensors share the same bus
@@ -143,7 +150,7 @@ PUB start(pinSCL, pinSDA)
     modeState := MODE_IDLE
     busyFlag := FALSE
     bLowBattLatched := FALSE
-    head.center()
+    head.panTo(head.HEAD_CENTER_DEG + cal.headTrim())        ' center + head trim
     standPose()                                              ' safe initial stance (uses flagged IK)
 
     taskspin(NEWTASK, motionTask(), @motionStack)            ' cooperative siblings in this cog
@@ -242,6 +249,10 @@ PRI senseTask() | passCount, pitchDeg, rollDeg
         if passCount >= BATTERY_READ_PASSES
             passCount := 0
             battMilliVolts := battery.batteryMilliVolts()
+            if battMilliVolts < battery.LOW_BATTERY_CUTOFF_MV
+                lowBattReadings++
+            else
+                lowBattReadings := 0                          ' reset on any healthy read (ignores inrush)
         tasknext()
 
 PRI consumeCommand() | requestedCmd
@@ -282,7 +293,7 @@ PRI consumeCommand() | requestedCmd
 PRI applySafetyFloor()
 ' Backend-owned safety: force rest (once) when the pack drops below the cutoff.
 
-    if (battMilliVolts <> 0) and (battMilliVolts < battery.LOW_BATTERY_CUTOFF_MV)
+    if lowBattReadings >= LOW_BATT_CONSECUTIVE
         if bLowBattLatched == FALSE
             bLowBattLatched := TRUE
             activeMode := MODE_RELAXED

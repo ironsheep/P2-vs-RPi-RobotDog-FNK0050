@@ -72,19 +72,20 @@ OBJ
   tibiaServo : "isp_i2c_pca9685_servo"
   term       : "isp_serial_singleton"                        ' debug terminal output
 
-DAT ' ---- singleton state ----
+VAR ' ---- PER-INSTANCE leg state (each isp_leg object is independent -- MUST be VAR, not DAT;
+    '      the backend runs four leg objects and they must not share side/trim) ----
 
-  bLeftSide      BYTE  FALSE
-  bShowDebug     BYTE  FALSE
+  byte  bLeftSide                                            ' SIDE mirror flag (per leg)
+  byte  bShowDebug
+  long  calOffsetCoxa                                        ' per-joint trim offsets (degrees)
+  long  calOffsetFemur
+  long  calOffsetTibia
+
+DAT ' ---- shared servo name labels (read-only; safe to share) ----
+
   coxaName       BYTE  "coxa", 0
   femurName      BYTE  "femr", 0
   tibiaName      BYTE  "tiba", 0
-
-DAT ' ---- per-joint calibration offsets (degrees) ----
-
-  calOffsetCoxa   LONG  0
-  calOffsetFemur  LONG  0
-  calOffsetTibia  LONG  0
 
 PUB null()
 '' This is not a top-level object.
@@ -200,6 +201,31 @@ PUB moveToXYZ(footX, footY, footZ) | thetaZY, aUnits, x4, x5, l23, adjB, bAsinUn
     cUnits := PI_UNITS - acosCUnits
 
     setJointAngles(unitsToDegrees(aUnits), unitsToDegrees(bUnits), unitsToDegrees(cUnits))
+
+PUB solveIKdegrees(footX, footY, footZ) : aDeg, bDeg, cDeg | thetaZY, aUnits, x4, x5, l23, adjB, bAsinUnits, numV, denV, oppV, acosVUnits, bUnits, numC, denC, oppC, acosCUnits, cUnits
+'' DRY-RUN: compute the IK-frame joint angles (degrees) for a foot target WITHOUT moving servos.
+'' Same math as moveToXYZ; for diagnosing the IK. @returns aDeg/bDeg/cDeg - coxa/femur/tibia, IK frame.
+    thetaZY := cordicAngleUnits(footZ, footY)
+    aUnits := HALF_PI_UNITS - thetaZY
+    x4 := qsin(LINK1_COXA_MM, aUnits, 0)
+    x5 := qcos(LINK1_COXA_MM, aUnits, 0)
+    l23 := sqrt( ((footZ - x5) * (footZ - x5)) + ((footY - x4) * (footY - x4)) + (footX * footX) )
+    l23 := 1 #> l23
+    adjB := sqrt( ((l23 * l23) - (footX * footX)) #> 0 )
+    bAsinUnits := cordicAngleUnits(footX, adjB)
+    numV := (LINK2_FEMUR_MM * LINK2_FEMUR_MM) + (l23 * l23) - (LINK3_TIBIA_MM * LINK3_TIBIA_MM)
+    denV := 2 * LINK2_FEMUR_MM * l23
+    oppV := sqrt( ((denV * denV) - (numV * numV)) #> 0 )
+    acosVUnits := cordicAngleUnits(oppV, numV)
+    bUnits := bAsinUnits - acosVUnits
+    numC := (LINK2_FEMUR_MM * LINK2_FEMUR_MM) + (LINK3_TIBIA_MM * LINK3_TIBIA_MM) - (l23 * l23)
+    denC := 2 * LINK3_TIBIA_MM * LINK2_FEMUR_MM
+    oppC := sqrt( ((denC * denC) - (numC * numC)) #> 0 )
+    acosCUnits := cordicAngleUnits(oppC, numC)
+    cUnits := PI_UNITS - acosCUnits
+    aDeg := unitsToDegrees(aUnits)
+    bDeg := unitsToDegrees(bUnits)
+    cDeg := unitsToDegrees(cUnits)
 
 PUB enableDebug(bEnable)
 '' Turn on/off this object's debug messaging.

@@ -1,0 +1,33 @@
+'' =================================================================================================
+''   File....... test_ik.spin2
+''   Purpose.... DIAGNOSTIC: print the CORDIC IK joint angles (degrees) for known foot targets.
+''               Pure math -- no servos, no I2C, no power needed. Verifies isp_leg.solveIKdegrees().
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Run headless (no robot): pnut-ts -d -q src/test_ik.spin2
+'                           pnut-term-ts -r src/test_ik.bin -b 2000000 --headless --end-marker "TEST_DONE"
+'  Expected neutral [0,99,10] (IK frame): a ~ 84, b ~ -46, c ~ 92  (knee bent -> foot reaches down).
+
+CON
+  _clkfreq   = 200_000_000
+  DEBUG_BAUD = 2_000_000
+
+OBJ
+  leg : "isp_leg"
+
+PUB main()
+    waitms(100)
+    DEBUG("=== IK dry-run (degrees, IK frame: coxa/femur/tibia) ===")
+    showIK(0, 99, 10)            ' neutral, front/left lateral
+    showIK(0, 99, -10)           ' neutral, back/right lateral
+    showIK(0, 110, 0)            ' straight down, max reach (l2+l3)
+    showIK(0, 60, 0)             ' tucked short
+    showIK(20, 99, 10)           ' reach forward
+    showIK(55, 78, 0)            ' relax pose
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI showIK(footX, footY, footZ) | aDeg, bDeg, cDeg
+    aDeg, bDeg, cDeg := leg.solveIKdegrees(footX, footY, footZ)
+    DEBUG("  XYZ(", sdec_(footX), ",", sdec_(footY), ",", sdec_(footZ), ") -> a=", sdec_(aDeg), " b=", sdec_(bDeg), " c=", sdec_(cDeg))

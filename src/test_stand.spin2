@@ -1,0 +1,92 @@
+'' =================================================================================================
+''   File....... test_stand.spin2
+''   Purpose.... Apply isp_calibration trims and move each leg to its IK neutral [0,99,+/-10] -- the
+''               standing pose. Validates calibration + CORDIC IK + side-mirror, one leg at a time.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (DEBUG @ 2 Mbaud). >> LIFT/SUPPORT THE ROBOT << -- the IK is still
+'  unverified, so watch each leg form the stance; outputs are clamped to legal servo angles.
+'  15 s countdown before motion. Order FL -> BL -> BR -> FR, then head. Run:
+'    pnut-ts -d -q src/test_stand.spin2
+'    pnut-term-ts -r src/test_stand.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 60
+
+CON
+  _clkfreq        = 200_000_000
+  DEBUG_BAUD      = 2_000_000
+
+  PIN_SCL         = 13
+  PIN_SDA         = 15
+  PIN_OE          = -1
+  PULLUP_1K5      = 1
+
+  CENTER_USEC     = 1500
+  USEC_SPAN       = 1400
+  DEG_SPAN        = 180
+  HEAD_CHANNEL    = 15
+  HEAD_CENTER_DEG = 90
+
+  NEUTRAL_Y       = 99             ' foot reach below hip, mm (Freenove neutral)
+  NEUTRAL_Z_FRONT = 10            ' lateral offset, front legs (mm)  -- z sign is ?-verify
+  NEUTRAL_Z_BACK  = -10           ' lateral offset, back legs (mm)
+
+  COUNTDOWN_S     = 15
+  LEG_DWELL_MS    = 2500
+
+OBJ
+  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+  cal     : "isp_calibration"
+  leg     : "isp_leg"                                       ' one leg object, re-init per leg (DAT-shared state)
+  battery : "isp_battery_monitor"                           ' pack voltage check (shared I2C bus)
+
+PUB main() | i
+    waitms(100)
+    DEBUG("=== STAND test: calibrated IK neutral, one leg at a time ===")
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. Load rail ON. IK is unverified -- watch each leg. <<")
+    if pca9685.start(PIN_SCL, PIN_SDA, PIN_OE) == FALSE
+        DEBUG("STAND: PCA9685 NOT FOUND -- aborting")
+        DEBUG("TEST_DONE")
+        repeat
+    pca9685.configureController()
+    pca9685.setAllServos(CENTER_USEC)                       ' safe centered start
+    reportBattery()                                         ' pack voltage under 12-servo hold
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  first move in ", udec_(i), " s ...")
+        waitms(1000)
+
+    DEBUG("Leg FRONT-LEFT  -> calibrated neutral (0,", sdec_(NEUTRAL_Y), ",", sdec_(NEUTRAL_Z_FRONT), ")")
+    standLeg(leg.SIDE_LEFT,  leg.END_FRONT, NEUTRAL_Z_FRONT)
+    DEBUG("Leg BACK-LEFT   -> calibrated neutral")
+    standLeg(leg.SIDE_LEFT,  leg.END_BACK,  NEUTRAL_Z_BACK)
+    DEBUG("Leg BACK-RIGHT  -> calibrated neutral")
+    standLeg(leg.SIDE_RIGHT, leg.END_BACK,  NEUTRAL_Z_BACK)
+    DEBUG("Leg FRONT-RIGHT -> calibrated neutral")
+    standLeg(leg.SIDE_RIGHT, leg.END_FRONT, NEUTRAL_Z_FRONT)
+
+    DEBUG("Head -> center + trim")
+    pca9685.gotoMicroSec(HEAD_CHANNEL, CENTER_USEC + ((HEAD_CENTER_DEG - 90 + cal.headTrim()) * USEC_SPAN) / DEG_SPAN)
+    waitms(LEG_DWELL_MS)
+
+    DEBUG("stand sequence done")
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI reportBattery() | milliVolts, voltsX10
+' Read and log the pack voltage (under the centered-servo hold).
+    if battery.start(PIN_SCL, PIN_SDA) <> battery.SUCCESS
+        DEBUG("battery: ADS7830 NOT FOUND")
+    else
+        milliVolts := battery.batteryMilliVolts()
+        voltsX10   := battery.batteryVoltsTenths()
+        DEBUG("battery: ", udec_(milliVolts), " mV  (", udec_(voltsX10 / 10), ".", udec_(voltsX10 // 10), " V)")
+        if battery.isLowBattery()
+            DEBUG("  WARNING: pack below 6.4 V cutoff")
+
+PRI standLeg(side, ending, zMm) | coxaT, femurT, tibiaT
+' Apply this leg's calibration, then drive it to the IK neutral stance.
+    leg.init(side, ending)
+    coxaT, femurT, tibiaT := cal.legTrims(side, ending)
+    leg.setCalibration(coxaT, femurT, tibiaT)
+    DEBUG("   trims (shoulder/thigh/knee) = ", sdec_(coxaT), " / ", sdec_(femurT), " / ", sdec_(tibiaT))
+    leg.moveToXYZ(0, NEUTRAL_Y, zMm)
+    waitms(LEG_DWELL_MS)
