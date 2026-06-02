@@ -16,7 +16,7 @@ CON
   DEBUG_BAUD    = 2_000_000
   PIN_SCL       = 13
   PIN_SDA       = 15
-  COUNTDOWN_S   = 15
+  COUNTDOWN_S   = 8                 ' shorter so the init STAND (after gyro cal) is easy to see
   COG_STACK     = 256
 
 OBJ

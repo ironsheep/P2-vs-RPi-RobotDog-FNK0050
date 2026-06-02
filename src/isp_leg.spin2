@@ -227,6 +227,12 @@ PUB solveIKdegrees(footX, footY, footZ) : aDeg, bDeg, cDeg | thetaZY, aUnits, x4
     bDeg := unitsToDegrees(bUnits)
     cDeg := unitsToDegrees(cUnits)
 
+PUB lastServoAngles() : coxaDeg, femurDeg, tibiaDeg | uSec
+'' Return the last-COMMANDED servo angles (degrees) for this leg's three joints (diagnostic).
+    uSec, coxaDeg  := coxaServo.getPosition()
+    uSec, femurDeg := femurServo.getPosition()
+    uSec, tibiaDeg := tibiaServo.getPosition()
+
 PUB enableDebug(bEnable)
 '' Turn on/off this object's debug messaging.
 ''
