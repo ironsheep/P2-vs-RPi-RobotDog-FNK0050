@@ -232,6 +232,59 @@ IK ownership: `isp_leg.moveToXYZ(x,y,z)` does the per-leg inverse kinematics
 (`coordinateToAngle` + side-mirror + that leg's calibration); `isp_robot_dog` generates the
 gait/pose target coordinates and drives all four legs. See [`../src/README.md`](../src/README.md) §3.
 
+### 6.1 Smooth-motion engine (implementation guide)
+
+**Goal:** regular, fluid motion with **no gaps or snaps** between moves. Today's code *snaps*
+(`isp_i2c_pca9685_servo.writePosition` writes once; `standPose`/`relaxPose` set final angles in one
+shot). The engine below replaces that. **`isp_leg` is the IK/angle provider; `isp_robot_dog` is the
+conductor** — coordination (timing, synchronization) lives at the **body** level, because
+synchronized, simultaneous multi-leg motion needs one shared timebase.
+
+**The model**
+- **One fixed-rate frame loop** (`motionTask`, CT-based ~50 Hz). Every frame it advances the motion
+  and writes **all 12 leg joints + head together** — never one leg at a time.
+- **Synchronized joint timing (within a leg):** a point-to-point move sets each joint's *target*
+  (via IK), then all joints interpolate from current→target over the **same duration** sharing one
+  normalized `s: 0→1`. Each joint moves at its own *relative* speed (distance ÷ T) but they **start
+  and arrive together**. Apply an **ease-in/out** S-curve on `s` so they accelerate/decelerate.
+- **All legs together (across legs):** one shared `s` (poses) or one shared gait phase (gaits)
+  drives every leg the same frame → the whole body arrives together.
+- **Two interpolation spaces:**
+  - *Joint-space lerp* — cheap; fine for poses (stand/relax/sit/transitions). Foot path is slightly
+    curved (invisible).
+  - *Cartesian foot-path + per-frame IK* — for gaits, where the foot must trace a defined path
+    (flat stance, arc swing). The CORDIC makes per-frame IK affordable.
+- **Blending:** when a new command arrives, ease from the *current* pose into the next pose/gait —
+  no stop-and-restart. This is what removes the gaps.
+
+**What we PORT from the reference (most of it) — `REF/FNK0050-Code/Server/Control.py`:**
+- `run()` (≈ line 97): IK for all 4 legs from `point[]`, apply per-leg calibration + the side
+  mirror, clamp 0–180, **write all 12 servos**. This is our per-frame "write all legs" — `point[]`
+  ⇄ our body-held target/current arrays.
+- `stop()` (≈ line 337): `delta = (target − current)/N`, loop N× adding delta and calling `run()` —
+  the **synchronized N-step point-to-point lerp** (all legs together). Our pose moves use this shape.
+- Gaits `forWard`/`backWard`/`turnLeft`/`turnRight`/`setpLeft`/`setpRight` (≈ line 284+): **Cartesian
+  foot trajectories** (`X=12·cos(phase)`, `Y=6·sin(phase)+height`, foot-lift clamp, diagonal pairs
+  180° apart), phase stepped by **`self.speed`** (the smoothness/speed knob). The full gait catalog
+  is here to port.
+- `changeCoordinates()` (≈ line 244): maps a gait's X/Y/Z into the 4-leg `point[]` mirror/diagonal
+  pattern. `checkPoint()` (≈ line 122): reachability guard (leg length 25–130 mm) — port as a safety
+  clamp.
+
+**What is OURS to invent (the P2 real-time layer):**
+- Freenove uses **blocking Python `for` loops** (timing = loop speed; `time.sleep` commented out).
+  We run the same math on a **non-blocking, fixed-rate cooperative frame** in `motionTask` so the IO
+  and comms cogs stay live and motion timing is deterministic.
+- **Mailbox-driven, interruptible/blendable** motion (Freenove finishes a gait loop before the next
+  command; ours blends/redirects mid-motion via the latched `mode` + current-pose blend).
+- **Ease-in/out** curves (Freenove steps are *linear* / constant-speed) — our refinement.
+
+**Refactor path:** give `isp_robot_dog` body-level `current[]`/`target[]` joint (or foot-XYZ) arrays
+and a `speed`/duration; turn `motionTask` into the fixed-rate interpolator that writes all legs each
+frame (a `run()`-equivalent); express poses as N-step lerps and gaits as Cartesian phase trajectories
+— porting `Control.py`'s math. Build this **before** authoring the full motion catalog, since it
+changes how every motion is issued.
+
 ---
 
 ## 7. Startup / init sequence
