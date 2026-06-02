@@ -234,6 +234,14 @@ gait/pose target coordinates and drives all four legs. See [`../src/README.md`](
 
 ### 6.1 Smooth-motion engine (implementation guide)
 
+**Quality bar:** Freenove's own demo videos look **wobbly/staccato** — a platform artifact
+(single-threaded Python on a Pi, blocking loops sharing the CPU with camera/streaming/server, no
+RTOS, linear steps). We aim to clearly **beat that look** by exploiting parallelism + determinism the
+Pi can't: a dedicated motion cog on a CT-timed fixed-rate loop (no OS jitter), CORDIC IK ~free (fine
+interpolation + per-frame Cartesian paths + ease-in/out), smart pins offloading PWM/serial/ultrasonic,
+and real-time IMU balance on a parallel cog. (Staccato = timing, ours to win; residual wobble is
+mechanical/dynamic — gait tuning + IMU balance.)
+
 **Goal:** regular, fluid motion with **no gaps or snaps** between moves. Today's code *snaps*
 (`isp_i2c_pca9685_servo.writePosition` writes once; `standPose`/`relaxPose` set final angles in one
 shot). The engine below replaces that. **`isp_leg` is the IK/angle provider; `isp_robot_dog` is the
