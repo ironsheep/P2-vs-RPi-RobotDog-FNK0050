@@ -1,0 +1,108 @@
+'' =================================================================================================
+''   File....... test_level.spin2
+''   Purpose.... IMU static-leveling bench harness. Launch the backend cog, command the calibrated
+''               neutral STAND, let it settle, then average getAttitude() to MEASURE the body tilt
+''               at neutral -- the "how level is it" answer. Capture the measured pitch/roll into
+''               src/isp_calibration.spin2 (stancePitchDeg/stanceRollDeg), rebuild, and re-run this
+''               harness: the reported tilt should now be ~0 (residual after the stance trim).
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Drives motion ONLY through the production backend mailbox (no bespoke servo path).
+'  >> LIFT/SUPPORT THE ROBOT << on launch (gyro cal, then it STANDS via IK). Run:
+'    pnut-ts -d -q src/test_level.spin2
+'    pnut-term-ts -r src/test_level.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 70
+'
+'  WORKFLOW (measure -> apply -> re-measure):
+'    1. Run with stancePitchDeg/stanceRollDeg = 0 -> read the MEASURED tilt (the raw un-leveled tilt).
+'    2. Paste those numbers into isp_calibration.spin2, rebuild.
+'    3. Re-run -> the MEASURED tilt is now the RESIDUAL; it should be near 0. If it grew, negate.
+
+CON
+  _clkfreq      = 200_000_000
+  DEBUG_BAUD    = 2_000_000
+  PIN_SCL       = 13
+  PIN_SDA       = 15
+  COUNTDOWN_S   = 8
+  COG_STACK     = 256
+  SETTLE_MS     = 4000              ' allow init + gyro cal + initial STAND to settle
+  AVG_SAMPLES   = 32               ' attitude samples to average
+  SAMPLE_MS     = 50               ' spacing between attitude samples
+
+OBJ
+  dog : "isp_robot_dog"
+  cal : "isp_calibration"                                    ' to echo the currently-applied stance trim
+
+VAR
+  long  cogStack[COG_STACK]
+
+PUB main() | backendCog
+    waitms(100)
+    DEBUG("=== IMU STATIC-LEVELING measure harness ===")
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. It will calibrate gyro (hold still) then STAND via IK. <<")
+    repeat backendCog from COUNTDOWN_S to 1
+        DEBUG("  launch in ", udec_(backendCog), " s ...")
+        waitms(1000)
+
+    backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @cogStack)
+    if backendCog < 0
+        DEBUG("FAILED to start backend cog -- aborting")
+        DEBUG("TEST_DONE")
+        repeat
+    DEBUG("backend launched in cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
+    waitms(SETTLE_MS)
+
+    reportStoredTrim()
+
+    DEBUG("-- post CMD_STAND (calibrated neutral), settle, then MEASURE tilt --")
+    dog.postCommand(dog.CMD_STAND, 0, 0, 0, 0)
+    waitms(SETTLE_MS)
+    measureTilt()
+
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI reportStoredTrim() | pitchDeg, rollDeg, idx
+' Echo the stance trim currently compiled into isp_calibration so the run is self-documenting.
+'
+' Local Variables:
+' @local pitchDeg/rollDeg - the stored measured tilt the trim corrects
+' @local idx - leg index
+
+    pitchDeg, rollDeg := cal.stanceTrimDegrees()
+    DEBUG("   applied stance trim: pitch=", sdec_(pitchDeg), " deg  roll=", sdec_(rollDeg), " deg")
+    DEBUG("   per-leg foot-Y delta (mm): FL=", sdec_(cal.stanceTrimY(0)), " BL=", sdec_(cal.stanceTrimY(1)), " FR=", sdec_(cal.stanceTrimY(2)), " BR=", sdec_(cal.stanceTrimY(3)))
+    if pitchDeg == 0 and rollDeg == 0
+        DEBUG("   (trim is 0 -> this MEASURE is the RAW un-leveled tilt; capture it into isp_calibration)")
+    else
+        DEBUG("   (trim applied -> this MEASURE is the RESIDUAL tilt; expect ~0)")
+
+PRI measureTilt() | i, pitchDeg, rollDeg, sumPitch, sumRoll, minP, maxP, minR, maxR
+' Average getAttitude() over AVG_SAMPLES to report the body tilt at neutral, with min/max to show
+' sensor noise. Reports tenths of a degree (sum*10/N) for sub-degree resolution.
+'
+' Local Variables:
+' @local i - sample index
+' @local pitchDeg/rollDeg - one attitude sample
+' @local sumPitch/sumRoll - running sums
+' @local minP/maxP/minR/maxR - observed extremes
+
+    sumPitch := 0
+    sumRoll := 0
+    pitchDeg, rollDeg := dog.getAttitude()
+    minP := maxP := pitchDeg
+    minR := maxR := rollDeg
+    repeat i from 1 to AVG_SAMPLES
+        pitchDeg, rollDeg := dog.getAttitude()
+        sumPitch += pitchDeg
+        sumRoll += rollDeg
+        minP := minP <# pitchDeg
+        maxP := maxP #> pitchDeg
+        minR := minR <# rollDeg
+        maxR := maxR #> rollDeg
+        waitms(SAMPLE_MS)
+
+    DEBUG("   MEASURED tilt over ", udec_(AVG_SAMPLES), " samples:")
+    DEBUG("     pitch avg=", sdec_(sumPitch / AVG_SAMPLES), " deg (x10=", sdec_((sumPitch * 10) / AVG_SAMPLES), ")  min=", sdec_(minP), " max=", sdec_(maxP))
+    DEBUG("     roll  avg=", sdec_(sumRoll / AVG_SAMPLES), " deg (x10=", sdec_((sumRoll * 10) / AVG_SAMPLES), ")  min=", sdec_(minR), " max=", sdec_(maxR))
+    DEBUG("   -> paste pitch/roll avg into isp_calibration stancePitchDeg/stanceRollDeg, rebuild, re-run.")

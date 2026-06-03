@@ -49,21 +49,27 @@ Three structural notes:
 ## 2. Object inventory & dependency tree
 
 ```
-isp_robot_dog            (T4: owns 4 legs + head + IMU + battery; gaits, poses, gestures, IK trajectories)
+isp_robot_dog_top        (T4 top: cog0 orchestrator; cogspins the two service cogs)
+  ├─ isp_robot_dog       (cog1: I²C bus owner, mailbox A) ───────────────────────┐
+  └─ isp_io_controller   (cog2: discrete-pin owner, mailbox B) ──────────┐       │
+                                                                         │       │
+isp_robot_dog            (T4: 4 legs + head + IMU + battery; smooth-motion engine, gait catalog, poses, gestures, leveling)
   ├─ isp_leg  ×4         (T3: one leg; moveToXYZ via shared IK, side-mirror, per-leg calibration)
   │   └─ isp_i2c_pca9685_servo  ×3   (T3 servo, seed)
   ├─ isp_head            (T3: pan/center/sweep, PCA9685 ch 15)
   │   └─ isp_i2c_pca9685_servo
   ├─ isp_imu             (T3: attitude — accel g / gyro °/s)        ─┐
   │   └─ isp_i2c_mpu6050 (T2: MPU6050 registers)                    │
-  └─ isp_battery_monitor (T3: pack volts, low-batt cutoff, median)  │
-      └─ isp_i2c_ads7830 (T2: ADS7830 counts / pin millivolts)      ├─ isp_i2c_pca9685 (T2)
-                                                                    │     │
-isp_led_ring             (T3: display modes; owns LED count)        │     └─ isp_i2c_singleton (T1: I²C master)
-  └─ isp_ws2812          (T1+T2: WS2812 transport + pixel buffer)   │
-isp_hcsr04               (T2+T3: ultrasonic, smart pin — no I²C)    │
-isp_buzzer               (T2+T3: buzzer, smart pin — no I²C)        │
-                                                                    │
+  ├─ isp_battery_monitor (T3: pack volts, low-batt cutoff, median)  │
+  │   └─ isp_i2c_ads7830 (T2: ADS7830 counts / pin millivolts)      ├─ isp_i2c_pca9685 (T2)
+  └─ isp_calibration     (per-joint servo trims + stance leveling)  │     │
+                                                                    │     └─ isp_i2c_singleton (T1: I²C master)
+isp_io_controller        (T4 IO cog: non-blocking LED + buzzer + ranging service loop)
+  ├─ isp_led_ring        (T3: display modes; owns LED count)
+  │   └─ isp_ws2812      (T1+T2: WS2812 transport + pixel buffer)
+  ├─ isp_buzzer          (T2+T3: buzzer, smart pin — no I²C)
+  └─ isp_hcsr04          (T2+T3: ultrasonic, smart pin — no I²C)
+
 (every object) ── isp_serial_singleton (debug: dec/hex/fstr/memDump) ── jm_nstr (number→string)
 ```
 
@@ -81,18 +87,24 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | `isp_i2c_ads7830.spin2` | 2 | ADS7830 @ `0x48` | `readChannelRaw` / `readChannelMillivolts` (divider-agnostic). VREF 5.0 V (consistent with the metered ÷3 battery) |
 | `isp_battery_monitor.spin2` | 3 | battery | 9-sample median, **÷3 divider** undo (METERED 2026-06-01), `isLowBattery` (<6.4 V) |
 | `isp_ws2812.spin2` | 1·2 | WS2812 strip (7 px) | inline-PASM, CT-paced fixed-cell + GRB buffer (dumb strip). Timing per jm_rgbx_pixel; confirm WS2812 vs B variant |
-| `isp_led_ring.spin2` | 3 | LED display modes | off/solid/wipe/chase/rainbow; `update()` steps one frame |
+| `isp_led_ring.spin2` | 3 | LED display modes | off/solid/wipe/chase/rainbow/rainbow-cycle; `update()` steps one frame |
+| `isp_io_controller.spin2` | 4 | discrete-pin IO cog | non-blocking service loop: LED anim + smart-pin ranging + auto-off buzzer; mailbox B (`postCommand`, `getDistanceMm`/`getPingSeq`/`isLedBusy`) |
 | `isp_i2c_mpu6050.spin2` | 2 | MPU6050 @ `0x68` | wake + ±2g/±250°/s; burst-read accel/gyro raw |
 | `isp_imu.spin2` | 3 | attitude | accel milli-g, gyro milli-°/s, `calibrateGyro` (settle + paced + motion-reject → SUCCESS/E_NOT_STILL), `tiltDegrees` (CORDIC). Mahony fusion = TODO |
-| `isp_hcsr04.spin2` | 2·3 | HC-SR04 ultrasonic | polled trig/echo → mm/cm; smart-pin pulse measure = upgrade |
-| `isp_buzzer.spin2` | 2·3 | buzzer | active buzzer `on`/`off`/`beep` |
+| `isp_hcsr04.spin2` | 2·3 | HC-SR04 ultrasonic | polled `readDistanceMm`/`Cm` **and** non-blocking smart-pin path (`startSmart`/`firePing`/`echoReadyMm`) ⚠ verify integrated |
+| `isp_buzzer.spin2` | 2·3 | buzzer | active buzzer `on`/`off`/`beep` (IO cog drives non-blocking via auto-off tick) |
 | `isp_leg.spin2` | 3 | one leg (3 servos) | `init(side, ending)`, `setJointAngles`, `moveToXYZ` (CORDIC IK ⚠ verify) |
 | `isp_head.spin2` | 3 | head pan (ch 15) | `panTo`/`center`/`sweep` |
-| `isp_robot_dog.spin2` | 4 | body coordinator | `{Spin2_v47}` cooperative tasks; mailbox `postCommand`; stand/relax/sit, forward gait + hello ⚠ verify |
+| `isp_calibration.spin2` | 3 | per-robot trims | per-joint servo trims (metered) + head trim + **static stance leveling** (`stanceTrimY`) |
+| `isp_robot_dog.spin2` | 4 | body coordinator | `{Spin2_v47}` cooperative tasks; mailbox A; smooth-motion engine (50 Hz eased), full gait catalog + speed knob, stand/relax/sit, hello, leveling ⚠ verify |
+| `isp_io_controller.spin2` | 4 | discrete-pin IO cog | mailbox B; non-blocking LED + ranging + buzzer (see row above) |
+| `isp_robot_dog_top.spin2` | 4 | integrated 3-cog top | `cogspin`s backend + IO cogs; scripted demo orchestrator over mailboxes A + B ⚠ verify |
 
 There is **no shared OBEX driver** for the ADS7830, MPU6050, or HC-SR04 — each is
-hand-rolled on the seed I²C singleton (or a smart pin). The forward gait, hello gesture, and
-backward/turn/balance gaits in `isp_robot_dog` are representative/extensible drafts.
+hand-rolled on the seed I²C singleton (or a smart pin). The **full gait catalog**
+(forward/backward, turn L/R, sidestep L/R) and the hello gesture in `isp_robot_dog` are
+implemented on the smooth-motion engine (build 0.1.1); on-bench behavioral verification is
+pending (the trajectory math is still ⚠ verify).
 
 ---
 
@@ -117,6 +129,17 @@ role from that identity.
 - **IK lives in `isp_leg`** (`moveToXYZ` = shared `coordinateToAngle` + side-mirror + this
   leg's calibration → 3 servo writes). The **body coordinator** (`isp_robot_dog`) generates
   per-leg target coordinates for gaits/poses and calls each leg.
+- **Motion timing lives at the body level (the smooth-motion engine).** `isp_robot_dog` owns a
+  CT-gated 50 Hz frame loop with body-level foot-target arrays (`cur/tgt/start[]`, leg order
+  FL/BL/FR/BR), an ease-in/out smoothstep, per-frame reachability guard, and blend-from-current —
+  so all 13 joints share one timebase and start/arrive together (no per-servo slew, no snaps). It
+  drives the **full gait catalog** (forward/backward, turn L/R, sidestep L/R; trotting diagonals
+  with an `arg0` speed knob) and folds in the **IMU static-leveling** stance trim
+  (`isp_calibration.stanceTrimY`). The behavioral contract is specified in
+  [`../DOCs/spec/P2-RobotDog-Specifications.md`](../DOCs/spec/P2-RobotDog-Specifications.md); the
+  as-built engine is ToOps §6.2.
+- **The three cogs are assembled in `isp_robot_dog_top`** — it `cogspin`s the backend (I²C, mailbox
+  A) and `isp_io_controller` (discrete pins, mailbox B), and runs a scripted orchestrator on cog 0.
 
 > ✅ The FL/BL/BR/FR ↔ channel assignment is **verified on hardware 2026-06-01** — each commanded
 > leg moved the matching physical leg (FL=4/3/2, BL=7/6/5, BR=8/9/10, FR=11/12/13, head=15). The
@@ -240,8 +263,11 @@ pnut-term-ts -r src/test_i2c_scan.bin -b 2000000 --headless \
 
 These were used for the 2026-06-01 bring-up (results: `../DOCs/P2_MIGRATION_WIRING.md` §7). The
 older menu console **`isp_dog_bringup.spin2`** still exists for interactive use against
-[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). The full-body `isp_robot_dog`
-integration (cog launch + frontend comms cog) is still **TODO**.
+[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). `test_backend.spin2` drives the
+backend cog through mailbox A; `test_level.spin2` is the IMU static-leveling measure harness; and
+**`isp_robot_dog_top.spin2`** is the assembled three-cog runtime (backend + IO cogs launched
+together, scripted orchestrator on cog 0). The real frontend comms cog (Wi-Fi/serial command link)
+is still **TODO**.
 
 `.bin` / `.lst` / `.obj` outputs are build artifacts — don't commit them.
 

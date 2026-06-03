@@ -33,12 +33,32 @@ CON ' ---- leg identity (must match isp_leg) ----
   JOINTS_PER_LEG  = 3
   HEAD_TRIM_DEG   = -5             ' head-pan center trim (PCA9685 ch 15)
 
+CON ' ---- static stance leveling (body geometry + measured neutral tilt) ----
+  {Spin2_Doc_CON}
+  ' Body lever arms (mm, from Freenove Control.py): half the hip-to-hip span. A measured body tilt
+  ' is turned into per-leg foot-Y deltas by the small-angle rule deltaY = lever * tiltDeg / 57
+  ' (1 radian ~= 57.3 deg; tilts are only a few degrees so the linear approximation is fine).
+  HALF_BODY_LENGTH_MM = 136        ' fore/aft lever arm (pitch -> front-vs-back foot-Y)
+  HALF_BODY_WIDTH_MM  = 76         ' lateral lever arm (roll  -> left-vs-right foot-Y)
+  DEG_PER_RADIAN      = 57         ' small-angle deg->mm scale divisor
+
+  ' Backend leg index order for stanceTrimY(): 0=FL 1=BL 2=FR 3=BR (matches isp_robot_dog cur[]).
+  #0, STANCE_FL, STANCE_BL, STANCE_FR, STANCE_BR
+
 DAT ' ---- per-joint servo trims, degrees (METERED 2026-06-01) ----
   ' index = (side*2 + ending) * 3, then [coxa, femur, tibia] = [shoulder, thigh, knee]
   legTrim   long  -23, -22,  -4    ' [0] LEFT  FRONT (FL) ch 4/3/2
             long   -2,   0,  -5    ' [1] LEFT  BACK  (BL) ch 7/6/5
             long  -11, -19, -16    ' [2] RIGHT FRONT (FR) ch 11/12/13
             long   -5,   0, -10    ' [3] RIGHT BACK  (BR) ch 8/9/10
+
+DAT ' ---- static stance trim: body tilt measured at the neutral stand (degrees) ----
+  ' MEASURE on the bench with src/test_level.spin2 (posts CMD_STAND, averages getAttitude()), then
+  ' paste the measured pitch/roll here and rebuild; re-run test_level to confirm residual ~= 0.
+  ' Sign convention (confirm on bench): +pitch = nose/front HIGH, +roll = LEFT side HIGH.
+  ' Both 0 until metered -> stanceTrimY() returns 0 and the stance is unchanged.
+  stancePitchDeg  long  0          ' measured fore/aft tilt at neutral (deg)
+  stanceRollDeg   long  0          ' measured left/right tilt at neutral (deg)
 
 PUB null()
 '' This is not a top-level object.
@@ -67,6 +87,36 @@ PUB headTrim() : panDeg
 '' @returns panDeg - head-pan trim (added to HEAD_CENTER_DEG)
 
     panDeg := HEAD_TRIM_DEG
+
+PUB stanceTrimDegrees() : pitchDeg, rollDeg
+'' Return the measured neutral-stand body tilt (degrees) that the leveling trim corrects.
+''
+'' @returns pitchDeg - measured fore/aft tilt at neutral
+'' @returns rollDeg - measured left/right tilt at neutral
+
+    pitchDeg := stancePitchDeg
+    rollDeg  := stanceRollDeg
+
+PUB stanceTrimY(legIdx) : footYDeltaMm | pitchTerm, rollTerm, pitchSign, rollSign
+'' Foot-Y leveling delta (mm) to ADD to one leg's neutral extension so the body stands level,
+'' derived from the measured neutral tilt. Returns 0 while both measured tilts are 0.
+''
+'' @param legIdx - backend leg index (0=FL 1=BL 2=FR 3=BR)
+'' @returns footYDeltaMm - mm to add to that leg's neutral foot-Y
+
+' Local Variables:
+' @local pitchTerm - mm correction magnitude from pitch (front/back lever)
+' @local rollTerm - mm correction magnitude from roll (left/right lever)
+' @local pitchSign - +1 raise this corner for pitch, -1 lower it
+' @local rollSign - +1 raise this corner for roll, -1 lower it
+
+    pitchTerm := (HALF_BODY_LENGTH_MM * stancePitchDeg) / DEG_PER_RADIAN
+    rollTerm  := (HALF_BODY_WIDTH_MM  * stanceRollDeg)  / DEG_PER_RADIAN
+    ' +pitch = front high -> lower front (idx 0,2 even), raise back (idx 1,3 odd)
+    pitchSign := (legIdx & 1) == 0 ? -1 : 1
+    ' +roll = left high -> lower left (idx 0,1), raise right (idx 2,3)
+    rollSign  := legIdx < STANCE_FR ? -1 : 1
+    footYDeltaMm := (pitchSign * pitchTerm) + (rollSign * rollTerm)
 
 CON ' ---- License ----
 

@@ -34,13 +34,19 @@ CON ' ---- commands (frontend -> backend mailbox) ----
   ' Posted with postCommand(); consumed by the dispatch loop:
   '  CMD_NONE       - no command
   '  CMD_STOP       - stop motion, hold a neutral stand
-  '  CMD_FORWARD    - walk forward (latched until STOP/other)
+  '  CMD_FORWARD    - walk forward (latched until STOP/other); arg0 = speed (deg/frame, 0 = default)
   '  CMD_RELAX      - relax to the tucked rest pose
   '  CMD_STAND      - ease to the neutral standing pose
   '  CMD_SIT        - sit (rear lowered)
   '  CMD_HELLO      - one-shot wave gesture
   '  CMD_HEAD       - pan head to arg0 degrees
+  '  CMD_BACKWARD   - walk backward (latched); arg0 = speed
+  '  CMD_TURN_LEFT  - turn left in place (latched); arg0 = speed
+  '  CMD_TURN_RIGHT - turn right in place (latched); arg0 = speed
+  '  CMD_STEP_LEFT  - sidestep left (latched); arg0 = speed
+  '  CMD_STEP_RIGHT - sidestep right (latched); arg0 = speed
   #0, CMD_NONE, CMD_STOP, CMD_FORWARD, CMD_RELAX, CMD_STAND, CMD_SIT, CMD_HELLO, CMD_HEAD
+  #8, CMD_BACKWARD, CMD_TURN_LEFT, CMD_TURN_RIGHT, CMD_STEP_LEFT, CMD_STEP_RIGHT
 
 CON ' ---- mode states (telemetry) ----
   {Spin2_Doc_CON}
@@ -58,13 +64,20 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
   RELAX_X_MM          = 55          ' tucked rest pose (Freenove relax point)
   RELAX_HEIGHT_MM     = 78
   SIT_FRONT_HEIGHT_MM = 60          ' front legs shortened to sit back
-  GAIT_X_AMPL_MM      = 12          ' fore/aft stride amplitude
-  GAIT_LIFT_MM        = 6           ' foot-lift amplitude during swing
-  GAIT_STEP_DEG       = 15          ' gait phase advance per motion frame
+  GAIT_X_AMPL_MM      = 12          ' fore/aft stride amplitude (forward/backward)
+  GAIT_LIFT_MM        = 6           ' foot-lift amplitude during swing (forward/backward)
+  TURN_XZ_AMPL_MM     = 3           ' turn fore/aft + lateral amplitude (X and Z coupled; Freenove turn)
+  TURN_LIFT_MM        = 8           ' foot-lift amplitude during a turn (Freenove turn)
+  STEP_Z_AMPL_MM      = 10          ' sidestep lateral amplitude (Freenove setpLeft/Right)
+  STEP_LIFT_MM        = 5           ' foot-lift amplitude during a sidestep
+  GAIT_STEP_DEG       = 15          ' default gait phase advance per motion frame (the speed knob)
+  GAIT_SPEED_MIN      = 3           ' slowest/smoothest gait phase step (deg/frame)
+  GAIT_SPEED_MAX      = 45          ' fastest gait phase step (deg/frame)
   HELLO_X_MM          = 80          ' raised front-right foot reach for the wave
   HELLO_AMPL_MM       = 30          ' wave height amplitude
   HELLO_SPEED_DEG     = 20          ' wave phase advance per frame
   HELLO_FRAMES        = 36          ' frames before the gesture completes
+  HELLO_LEADIN_FRAMES = 8           ' frames to ease the FR foot out to the wave reach (no start snap)
   ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (for qsin/qcos phase math)
   DEGREES_PER_CIRCLE  = 360
   HALF_CIRCLE_DEG     = 180
@@ -74,6 +87,15 @@ CON ' ---- runtime ----
   BATTERY_READ_PASSES   = 50        ' senseTask passes between battery reads
   LOW_BATT_CONSECUTIVE  = 3         ' consecutive LOW battery readings before forcing rest (ignore inrush sags)
   PIN_OE_UNUSED         = -1        ' PCA9685 /OE not driven by the P2 (tied on the board)
+
+CON ' ---- smooth-motion engine (fixed-rate, eased, blendable) ----
+  NUM_LEGS        = 4               ' leg slots: 0=FL 1=BL 2=FR 3=BR (the order start()/writeLegs() use)
+  FRAME_HZ        = 50              ' motion frame rate (CT-gated); one timebase for all joints
+  EASE_ONE        = 4096            ' fixed-point 1.0 for the ease/lerp math (12-bit)
+  POSE_FRAMES     = 30              ' eased duration of a pose transition (~0.6 s @ 50 Hz)
+  HEAD_FRAMES     = 20              ' eased duration of a head pan (~0.4 s)
+  REACH_MIN_MM    = 25             ' checkPoint reachability guard (Freenove leg-length floor)
+  REACH_MAX_MM    = 130            ' checkPoint reachability guard (Freenove leg-length ceiling)
 
 OBJ
 
@@ -110,13 +132,36 @@ DAT ' ---- internal control state (backend cog only) ----
 
   activeMode       LONG  MODE_IDLE
   gaitPhase        LONG  0
+  gaitKind         LONG  CMD_FORWARD                          ' which gait trajectory advanceGait runs
+  gaitStepDeg      LONG  GAIT_STEP_DEG                        ' phase step magnitude (the speed knob)
+  gaitStepSigned   LONG  GAIT_STEP_DEG                        ' signed phase step (+ fwd/turnL/stepL, - back/stepR)
   gestureId        LONG  CMD_NONE
   gesturePhase     LONG  0
+  helloStartX      LONG  0                                    ' FR foot X when the wave began (ease-in anchor)
   bLowBattLatched  BYTE  FALSE
   bShowDebug       BYTE  FALSE
   lowBattReadings  LONG  0                                    ' consecutive low battery readings
   motionStack      LONG  0[TASK_STACK_LONGS]
   senseStack       LONG  0[TASK_STACK_LONGS]
+
+DAT ' ---- motion engine state (backend cog only): foot targets in mm, leg order FL/BL/FR/BR ----
+
+  curX             LONG  0[NUM_LEGS]                          ' foot position the legs are AT right now (mm)
+  curY             LONG  0[NUM_LEGS]
+  curZ             LONG  0[NUM_LEGS]
+  tgtX             LONG  0[NUM_LEGS]                          ' foot position the active move is easing toward
+  tgtY             LONG  0[NUM_LEGS]
+  tgtZ             LONG  0[NUM_LEGS]
+  startX           LONG  0[NUM_LEGS]                          ' foot position captured when the move began (lerp anchor)
+  startY           LONG  0[NUM_LEGS]
+  startZ           LONG  0[NUM_LEGS]
+  curHeadDeg       LONG  0                                    ' head pan the servo is AT now
+  tgtHeadDeg       LONG  0                                    ' head pan target
+  startHeadDeg     LONG  0                                    ' head pan at move start
+  moveFrames       LONG  0                                    ' total frames in the active eased move (0 = at rest)
+  moveFrame        LONG  0                                    ' frames elapsed in the active move (0..moveFrames)
+  frameTicks       LONG  0                                    ' getct() ticks per motion frame (clkfreq / FRAME_HZ)
+  nextFrameCt      LONG  0                                    ' getct() deadline for the next frame
 
 PUB null()
 '' This is not a top-level object.
@@ -150,8 +195,10 @@ PUB start(pinSCL, pinSDA)
     modeState := MODE_IDLE
     busyFlag := FALSE
     bLowBattLatched := FALSE
-    head.panTo(head.HEAD_CENTER_DEG + cal.headTrim())        ' center + head trim
-    standPose()                                              ' safe initial stance (uses flagged IK)
+    frameTicks := clkfreq / FRAME_HZ                         ' motion-engine timebase (CT ticks per frame)
+    curHeadDeg := head.HEAD_CENTER_DEG + cal.headTrim()      ' head starts centered + trim
+    tgtHeadDeg := curHeadDeg
+    seedStand()                                              ' snap to the neutral stance ONCE at power-on (no pose to blend from)
 
     taskspin(NEWTASK, motionTask(), @motionStack)            ' cooperative siblings in this cog
     taskspin(NEWTASK, senseTask(), @senseStack)
@@ -220,17 +267,28 @@ PRI dispatchLoop()
         tasknext()
 
 PRI motionTask()
-' Cooperative task: advance the active motion one frame per scheduling turn.
+' Cooperative task: the fixed-rate (~50 Hz) motion frame loop. Each due frame advances the active
+' motion and writes ALL legs (+ head) together, then yields so the dispatch and sense tasks keep
+' running. A frame's servo writes always COMPLETE before tasknext(), so the I2C bus stays coherent
+' with no lock (Theory-of-Ops sec.3 yield discipline).
 
+    nextFrameCt := getct()
     repeat
-        case activeMode
-            MODE_GAITING:
-                advanceGait()
-            MODE_GESTURE_BUSY:
-                advanceGesture()
-            other:
-                ' static pose -- nothing to advance
+        if (getct() - nextFrameCt) >= 0                      ' wrap-safe: frame deadline reached?
+            nextFrameCt += frameTicks
+            advanceFrame()
         tasknext()
+
+PRI advanceFrame()
+' Produce and write one motion frame for the active mode.
+
+    case activeMode
+        MODE_GAITING:
+            advanceGait()                                    ' Cartesian per-frame trajectory (sec.3 extends the catalog)
+        MODE_GESTURE_BUSY:
+            advanceGesture()
+        other:
+            stepPose()                                       ' eased point-to-point lerp toward the pose/head target
 
 PRI senseTask() | passCount, pitchDeg, rollDeg
 ' Cooperative task: refresh the attitude mailbox each turn; the battery less often.
@@ -269,9 +327,17 @@ PRI consumeCommand() | requestedCmd
             modeState := MODE_IDLE
             standPose()
         CMD_FORWARD:
-            activeMode := MODE_GAITING
-            modeState := MODE_GAITING
-            gaitPhase := 0
+            startGait(CMD_FORWARD, 1, cmdArg0)
+        CMD_BACKWARD:
+            startGait(CMD_BACKWARD, -1, cmdArg0)             ' same shape as forward, phase reversed
+        CMD_TURN_LEFT:
+            startGait(CMD_TURN_LEFT, 1, cmdArg0)
+        CMD_TURN_RIGHT:
+            startGait(CMD_TURN_RIGHT, 1, cmdArg0)            ' own trajectory; phase forward
+        CMD_STEP_LEFT:
+            startGait(CMD_STEP_LEFT, 1, cmdArg0)
+        CMD_STEP_RIGHT:
+            startGait(CMD_STEP_RIGHT, -1, cmdArg0)           ' same shape as stepLeft, phase reversed
         CMD_RELAX:
             activeMode := MODE_RELAXED
             modeState := MODE_RELAXED
@@ -281,12 +347,13 @@ PRI consumeCommand() | requestedCmd
             modeState := MODE_IDLE
             sitPose()
         CMD_HEAD:
-            head.panTo(cmdArg0)
+            headPanTo(cmdArg0)
         CMD_HELLO:
             if busyFlag == FALSE                              ' reject if a gesture is already running
                 busyFlag := TRUE
                 gestureId := CMD_HELLO
                 gesturePhase := 0
+                helloStartX := curX[2]                        ' anchor the ease-in at the FR foot's current reach
                 activeMode := MODE_GESTURE_BUSY
                 modeState := MODE_GESTURE_BUSY
 
@@ -302,31 +369,120 @@ PRI applySafetyFloor()
             if bShowDebug
                 term.fstr1(string("dog- LOW BATTERY %d mV -> relax\r\n"), battMilliVolts)
 
-PRI advanceGait() | angleA, angleB, strideXA, footYA, strideXB, footYB
-' Advance the forward trot one frame. Diagonal pairs {FL,BR} and {FR,BL} are 180 deg out of phase.
+PRI advanceGait() | aUnits, bUnits
+' Advance the active gait one frame. Diagonal pairs A={FL,BR} and B={BL,FR} run 180 deg out of
+' phase (trot). The per-gait trajectory writes the four feet directly into cur[]; the sinusoid is
+' already smooth so no easing is applied. Ported from Freenove Control.py onto our verified neutral
+' (X=0, Z=+/-STANCE_LATERAL_MM): the trajectory shapes are faithful, the absolute offsets are ours.
 '
 ' Local Variables:
-' @local angleA - phase of pair A in P2 angle units
-' @local angleB - phase of pair B (180 deg offset)
-' @local strideXA - fore/aft position of pair A
-' @local footYA - foot extension of pair A
-' @local strideXB - fore/aft position of pair B
-' @local footYB - foot extension of pair B
+' @local aUnits - phase of pair A in P2 angle units
+' @local bUnits - phase of pair B (180 deg offset)
 
-    angleA := degToUnits(gaitPhase)
-    angleB := degToUnits(gaitPhase + HALF_CIRCLE_DEG)
-    strideXA := qcos(GAIT_X_AMPL_MM, angleA, 0)
-    strideXB := qcos(GAIT_X_AMPL_MM, angleB, 0)
-    ' foot extension never exceeds the stance height (foot lifts only on the swing half)
-    footYA := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, angleA, 0)) <# STAND_HEIGHT_MM
-    footYB := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, angleB, 0)) <# STAND_HEIGHT_MM
-    flLeg.moveToXYZ(strideXA, footYA, STANCE_LATERAL_MM)
-    brLeg.moveToXYZ(strideXA, footYA, -STANCE_LATERAL_MM)
-    frLeg.moveToXYZ(strideXB, footYB, -STANCE_LATERAL_MM)
-    blLeg.moveToXYZ(strideXB, footYB, STANCE_LATERAL_MM)
-    gaitPhase += GAIT_STEP_DEG
+    aUnits := degToUnits(gaitPhase)
+    bUnits := degToUnits(gaitPhase + HALF_CIRCLE_DEG)
+    case gaitKind
+        CMD_FORWARD, CMD_BACKWARD:
+            gaitLinearFwd(aUnits, bUnits)                    ' backward = same shape, gaitStepSigned negative
+        CMD_STEP_LEFT, CMD_STEP_RIGHT:
+            gaitSidestep(aUnits, bUnits)                     ' stepRight = same shape, gaitStepSigned negative
+        CMD_TURN_LEFT:
+            gaitTurn(aUnits, bUnits, 1)
+        CMD_TURN_RIGHT:
+            gaitTurn(aUnits, bUnits, -1)                     ' right = left with X amplitudes negated
+    commitCur()
+    advanceGaitPhase()
+
+PRI gaitLinearFwd(aUnits, bUnits) | strideXA, footYA, strideXB, footYB
+' Forward/backward trot: X = 12*cos(phase) stride, Y = 6*sin(phase)+h lift (clamped to stance).
+'
+' @param aUnits - pair A phase, P2 units
+' @param bUnits - pair B phase, P2 units
+' Local Variables:
+' @local strideXA, footYA - pair A fore/aft + extension
+' @local strideXB, footYB - pair B fore/aft + extension
+
+    strideXA := qcos(GAIT_X_AMPL_MM, aUnits, 0)
+    strideXB := qcos(GAIT_X_AMPL_MM, bUnits, 0)
+    footYA := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, aUnits, 0)) <# STAND_HEIGHT_MM
+    footYB := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, bUnits, 0)) <# STAND_HEIGHT_MM
+    setCur(0, strideXA, footYA,  STANCE_LATERAL_MM)          ' FL (pair A)
+    setCur(3, strideXA, footYA, -STANCE_LATERAL_MM)          ' BR (pair A)
+    setCur(1, strideXB, footYB,  STANCE_LATERAL_MM)          ' BL (pair B)
+    setCur(2, strideXB, footYB, -STANCE_LATERAL_MM)          ' FR (pair B)
+
+PRI gaitSidestep(aUnits, bUnits) | zA, footYA, zB, footYB
+' Sidestep trot: X = 0, Z = 10*cos(phase) added to the lateral stance, Y = 5*sin(phase)+h lift.
+'
+' @param aUnits - pair A phase, P2 units
+' @param bUnits - pair B phase, P2 units
+' Local Variables:
+' @local zA, footYA - pair A lateral shift + extension
+' @local zB, footYB - pair B lateral shift + extension
+
+    zA := qcos(STEP_Z_AMPL_MM, aUnits, 0)
+    zB := qcos(STEP_Z_AMPL_MM, bUnits, 0)
+    footYA := (STAND_HEIGHT_MM + qsin(STEP_LIFT_MM, aUnits, 0)) <# STAND_HEIGHT_MM
+    footYB := (STAND_HEIGHT_MM + qsin(STEP_LIFT_MM, bUnits, 0)) <# STAND_HEIGHT_MM
+    setCur(0, 0, footYA,  STANCE_LATERAL_MM + zA)            ' FL (pair A)
+    setCur(3, 0, footYA, -STANCE_LATERAL_MM + zA)            ' BR (pair A)
+    setCur(1, 0, footYB,  STANCE_LATERAL_MM + zB)            ' BL (pair B)
+    setCur(2, 0, footYB, -STANCE_LATERAL_MM + zB)            ' FR (pair B)
+
+PRI gaitTurn(aUnits, bUnits, turnSign) | xA, footYA, xB, footYB
+' Turn-in-place trot: X = 3*cos(phase), Y = 8*sin(phase)+h, Z coupled to X (Freenove turn mapping
+' decoded onto our neutral). FL/BR = pair A (X1), BL/FR = pair B (X2). turnSign = +1 left, -1 right
+' (right is left with the X amplitudes negated).
+'
+' @param aUnits - pair A phase, P2 units
+' @param bUnits - pair B phase, P2 units
+' @param turnSign - +1 turn left, -1 turn right
+' Local Variables:
+' @local xA, footYA - pair A fore/aft + extension
+' @local xB, footYB - pair B fore/aft + extension
+
+    xA := turnSign * qcos(TURN_XZ_AMPL_MM, aUnits, 0)
+    xB := turnSign * qcos(TURN_XZ_AMPL_MM, bUnits, 0)
+    footYA := (STAND_HEIGHT_MM + qsin(TURN_LIFT_MM, aUnits, 0)) <# STAND_HEIGHT_MM
+    footYB := (STAND_HEIGHT_MM + qsin(TURN_LIFT_MM, bUnits, 0)) <# STAND_HEIGHT_MM
+    setCur(0, -xA, footYA,  xA + STANCE_LATERAL_MM)          ' FL (pair A)
+    setCur(3,  xA, footYA, -xA - STANCE_LATERAL_MM)          ' BR (pair A)
+    setCur(1, -xB, footYB, -xB + STANCE_LATERAL_MM)          ' BL (pair B)
+    setCur(2,  xB, footYB,  xB - STANCE_LATERAL_MM)          ' FR (pair B)
+
+PRI advanceGaitPhase()
+' Advance the gait phase by the signed speed step, wrapping into 0..359 in either direction.
+
+    gaitPhase += gaitStepSigned
     if gaitPhase >= DEGREES_PER_CIRCLE
         gaitPhase -= DEGREES_PER_CIRCLE
+    elseif gaitPhase < 0
+        gaitPhase += DEGREES_PER_CIRCLE
+
+PRI startGait(kind, dir, speedArg)
+' Latch a gait: select its trajectory, set the signed phase step from the speed knob, and enter
+' MODE_GAITING (D1 -- one command sustains the gait until STOP/other).
+'
+' @param kind - the gait CMD_* selector (drives advanceGait's dispatch)
+' @param dir - phase direction: +1 normal, -1 reversed (backward / sidestep-right)
+' @param speedArg - requested speed (deg/frame); 0 keeps the default
+
+    gaitKind := kind
+    setGaitSpeed(speedArg)
+    gaitStepSigned := gaitStepDeg * dir
+    gaitPhase := 0
+    activeMode := MODE_GAITING
+    modeState := MODE_GAITING
+
+PRI setGaitSpeed(speedArg)
+' Set the gait speed (phase deg/frame) from a command arg; 0 restores the default, else clamp.
+'
+' @param speedArg - requested speed, deg/frame (0 = default)
+
+    if speedArg > 0
+        gaitStepDeg := GAIT_SPEED_MIN #> speedArg <# GAIT_SPEED_MAX
+    else
+        gaitStepDeg := GAIT_STEP_DEG
 
 PRI advanceGesture()
 ' Advance the active one-shot gesture one frame.
@@ -337,14 +493,22 @@ PRI advanceGesture()
         other:
             finishGesture()
 
-PRI advanceHello() | waveY
-' Wave the front-right leg by oscillating its foot height; finish after HELLO_FRAMES.
+PRI advanceHello() | waveY, reachX
+' Wave the front-right leg by oscillating its foot height; finish after HELLO_FRAMES. The reach
+' eases out from the foot's start position over HELLO_LEADIN_FRAMES so there is no start snap; the
+' ease back to stand is handled by finishGesture -> standPose.
 '
 ' Local Variables:
 ' @local waveY - oscillating foot extension for the wave
+' @local reachX - fore/aft reach, eased in over the lead-in then held
 
+    if gesturePhase < HELLO_LEADIN_FRAMES
+        reachX := lerpFix(helloStartX, HELLO_X_MM, easeFactor(gesturePhase + 1, HELLO_LEADIN_FRAMES))
+    else
+        reachX := HELLO_X_MM
     waveY := STAND_HEIGHT_MM + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
-    frLeg.moveToXYZ(HELLO_X_MM, waveY, -STANCE_LATERAL_MM)
+    setCur(2, reachX, waveY, -STANCE_LATERAL_MM)             ' FR foot waves; the other three hold their current pose
+    commitCur()
     gesturePhase++
     if gesturePhase >= HELLO_FRAMES
         finishGesture()
@@ -359,35 +523,204 @@ PRI finishGesture()
     standPose()
 
 PRI standPose()
-' Ease all four feet to the neutral standing stance.
+' Ease all four feet to the neutral standing stance (blends from wherever the feet are now).
 
-    allLegsToXYZ(0, STAND_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)
+    setLevelStandTargets()
+    beginPoseMove(POSE_FRAMES)
 
 PRI relaxPose()
-' Tuck all four feet to the resting pose.
+' Ease all four feet to the tucked resting pose.
 
-    allLegsToXYZ(RELAX_X_MM, RELAX_HEIGHT_MM, 0, 0)
+    setLegTargets(RELAX_X_MM, RELAX_HEIGHT_MM, 0, 0)
+    beginPoseMove(POSE_FRAMES)
 
 PRI sitPose()
-' Lower the rear by shortening the back legs while the front legs stand.
+' Ease to a sit: front legs stand tall, back legs shorten so the rear lowers.
 
-    flLeg.moveToXYZ(0, STAND_HEIGHT_MM, STANCE_LATERAL_MM)
-    frLeg.moveToXYZ(0, STAND_HEIGHT_MM, -STANCE_LATERAL_MM)
-    blLeg.moveToXYZ(0, SIT_FRONT_HEIGHT_MM, STANCE_LATERAL_MM)
-    brLeg.moveToXYZ(0, SIT_FRONT_HEIGHT_MM, -STANCE_LATERAL_MM)
+    setLegTarget(0, 0, STAND_HEIGHT_MM,     STANCE_LATERAL_MM)    ' FL stands
+    setLegTarget(2, 0, STAND_HEIGHT_MM,    -STANCE_LATERAL_MM)    ' FR stands
+    setLegTarget(1, 0, SIT_FRONT_HEIGHT_MM, STANCE_LATERAL_MM)    ' BL lowered
+    setLegTarget(3, 0, SIT_FRONT_HEIGHT_MM,-STANCE_LATERAL_MM)    ' BR lowered
+    beginPoseMove(POSE_FRAMES)
 
-PRI allLegsToXYZ(footX, footY, leftZ, rightZ)
-' Drive all four feet to (footX, footY, z) with the side-appropriate lateral z.
+PRI headPanTo(panDeg)
+' Pan the head to panDeg. Eases while idle/posed; if a gait or gesture owns the frame loop the
+' head moves immediately (the eased frame path is busy driving the legs).
+'
+' @param panDeg - head pan target, degrees
+
+    tgtHeadDeg := panDeg
+    if activeMode == MODE_GAITING or activeMode == MODE_GESTURE_BUSY
+        curHeadDeg := panDeg
+        head.panTo(panDeg)
+    else
+        holdLegs()                                           ' legs stay put; only the head eases
+        armMove(HEAD_FRAMES)
+
+PRI seedStand()
+' Power-on only: place the feet at the neutral stance IMMEDIATELY (no prior pose to blend from).
+
+    setLevelStandTargets()
+    longmove(@curX, @tgtX, NUM_LEGS)
+    longmove(@curY, @tgtY, NUM_LEGS)
+    longmove(@curZ, @tgtZ, NUM_LEGS)
+    moveFrames := 0
+    moveFrame := 0
+    commitCur()
+    head.panTo(curHeadDeg)
+
+PRI beginPoseMove(frames)
+' Arm an eased leg move toward the current targets; the head holds (target := current).
+'
+' @param frames - eased move duration, frames
+
+    tgtHeadDeg := curHeadDeg
+    armMove(frames)
+
+PRI armMove(frames)
+' Snapshot start := current for every joint and begin an eased move of `frames` frames.
+'
+' @param frames - eased move duration, frames
+
+    longmove(@startX, @curX, NUM_LEGS)
+    longmove(@startY, @curY, NUM_LEGS)
+    longmove(@startZ, @curZ, NUM_LEGS)
+    startHeadDeg := curHeadDeg
+    moveFrames := 1 #> frames
+    moveFrame := 0
+
+PRI stepPose() | e, idx
+' Advance one frame of an eased point-to-point move (poses / head pan). All joints share one
+' ease-in/out s so they start and arrive together; holds once the move completes.
+'
+' Local Variables:
+' @local e - ease factor this frame, 0..EASE_ONE
+' @local idx - leg index
+
+    if moveFrame < moveFrames
+        moveFrame++
+        e := easeFactor(moveFrame, moveFrames)
+        repeat idx from 0 to NUM_LEGS - 1
+            curX[idx] := lerpFix(startX[idx], tgtX[idx], e)
+            curY[idx] := lerpFix(startY[idx], tgtY[idx], e)
+            curZ[idx] := lerpFix(startZ[idx], tgtZ[idx], e)
+        if startHeadDeg <> tgtHeadDeg
+            curHeadDeg := lerpFix(startHeadDeg, tgtHeadDeg, e)
+            head.panTo(curHeadDeg)
+        commitCur()
+
+PRI commitCur() | idx
+' Guard every foot for reachability, then drive all four legs to their current foot positions.
+'
+' Local Variables:
+' @local idx - leg index
+
+    repeat idx from 0 to NUM_LEGS - 1
+        guardReach(idx)
+    writeLegs()
+
+PRI writeLegs()
+' Drive the four legs to their current foot positions (FL/BL/FR/BR -> 12 servo writes).
+
+    flLeg.moveToXYZ(curX[0], curY[0], curZ[0])
+    blLeg.moveToXYZ(curX[1], curY[1], curZ[1])
+    frLeg.moveToXYZ(curX[2], curY[2], curZ[2])
+    brLeg.moveToXYZ(curX[3], curY[3], curZ[3])
+
+PRI guardReach(idx) | x, y, z, r, rGuarded
+' checkPoint guard (ported from Freenove Control.checkPoint): clamp foot[idx] to the reachable
+' shell REACH_MIN_MM..REACH_MAX_MM by scaling it along its own radius. Belt-and-suspenders with
+' the 0..180 deg servo-angle clamp in isp_leg.setJointAngles.
+'
+' @param idx - leg index
+' Local Variables:
+' @local x,y,z - this foot's current position, mm
+' @local r - foot distance from the hip, mm
+' @local rGuarded - r clamped into the reachable range
+
+    x := curX[idx]
+    y := curY[idx]
+    z := curZ[idx]
+    r := sqrt((x * x) + (y * y) + (z * z))
+    if r > 0
+        rGuarded := REACH_MIN_MM #> r <# REACH_MAX_MM
+        if rGuarded <> r
+            curX[idx] := (x * rGuarded) / r
+            curY[idx] := (y * rGuarded) / r
+            curZ[idx] := (z * rGuarded) / r
+
+PRI easeFactor(frame, total) : e | s, s2, s3
+' Smoothstep ease-in/out in fixed point: e = 3s^2 - 2s^3, with s = frame/total scaled to EASE_ONE.
+'
+' @param frame - frames elapsed (1..total)
+' @param total - total frames in the move
+' @returns e - ease factor, 0..EASE_ONE
+' Local Variables:
+' @local s - normalized progress, 0..EASE_ONE
+' @local s2 - s squared (fixed point)
+' @local s3 - s cubed (fixed point)
+
+    s := (frame * EASE_ONE) / total
+    s2 := (s * s) / EASE_ONE
+    s3 := (s2 * s) / EASE_ONE
+    e := (3 * s2) - (2 * s3)
+
+PRI lerpFix(fromVal, toVal, e) : val
+' Linear interpolate fromVal -> toVal by ease factor e (0..EASE_ONE).
+'
+' @param fromVal - start value
+' @param toVal - end value
+' @param e - ease factor, 0..EASE_ONE
+' @returns val - interpolated value
+
+    val := fromVal + (((toVal - fromVal) * e) / EASE_ONE)
+
+PRI setLevelStandTargets() | idx, lateralZ
+' Set the four neutral-stand foot targets, folding each leg's static leveling trim into footY so
+' the body stands level. The per-leg deltas come from isp_calibration.stanceTrimY() and are 0 until
+' the neutral tilt is metered (src/test_level.spin2) -> stance is unchanged until then.
+'
+' Local Variables:
+' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
+' @local lateralZ - lateral stance for this leg (left legs +, right legs -)
+
+    repeat idx from 0 to NUM_LEGS - 1
+        lateralZ := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM   ' FL/BL left, FR/BR right
+        setLegTarget(idx, 0, STAND_HEIGHT_MM + cal.stanceTrimY(idx), lateralZ)
+
+PRI setLegTargets(footX, footY, leftZ, rightZ)
+' Set all four foot targets: left legs (FL/BL) to leftZ, right legs (FR/BR) to rightZ.
 '
 ' @param footX - fore/aft target, mm
 ' @param footY - foot extension, mm
 ' @param leftZ - lateral target for the left legs, mm
 ' @param rightZ - lateral target for the right legs, mm
 
-    flLeg.moveToXYZ(footX, footY, leftZ)
-    blLeg.moveToXYZ(footX, footY, leftZ)
-    frLeg.moveToXYZ(footX, footY, rightZ)
-    brLeg.moveToXYZ(footX, footY, rightZ)
+    setLegTarget(0, footX, footY, leftZ)                     ' FL
+    setLegTarget(1, footX, footY, leftZ)                     ' BL
+    setLegTarget(2, footX, footY, rightZ)                    ' FR
+    setLegTarget(3, footX, footY, rightZ)                    ' BR
+
+PRI setLegTarget(idx, footX, footY, footZ)
+' Set one foot's eased-move target (mm).
+
+    tgtX[idx] := footX
+    tgtY[idx] := footY
+    tgtZ[idx] := footZ
+
+PRI setCur(idx, footX, footY, footZ)
+' Set one foot's CURRENT position directly (used by per-frame trajectories: gaits, gestures).
+
+    curX[idx] := footX
+    curY[idx] := footY
+    curZ[idx] := footZ
+
+PRI holdLegs()
+' Pin the leg targets to the current pose so an eased move leaves the legs where they are.
+
+    longmove(@tgtX, @curX, NUM_LEGS)
+    longmove(@tgtY, @curY, NUM_LEGS)
+    longmove(@tgtZ, @curZ, NUM_LEGS)
 
 PRI degToUnits(degrees) : angleUnits
 ' Convert degrees to P2 CORDIC angle units (wraps mod 360 via 32-bit overflow).

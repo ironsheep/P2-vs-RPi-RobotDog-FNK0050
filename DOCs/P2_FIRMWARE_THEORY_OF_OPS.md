@@ -7,11 +7,15 @@ companion to the **static** structure in [`../src/README.md`](../src/README.md) 
 tiers, files, pins). When the two overlap, this document owns runtime behavior; the README
 owns the object/tier map.
 
-> Status: **proposed/agreed design; driver objects drafted.** All Tier 1–4 objects named here
-> now exist in `src/` and compile clean (PNut-ts v1.55), but the three-cog wiring (cogspin of
-> the backend, the IO cog, and the comms loop, with mailboxes A + B) is not yet assembled, the
-> smart-pin ultrasonic + non-blocking buzzer refactors the IO cog needs are pending, and the
-> IK/gait/timing math is flagged **⚠ verify** pending hardware. This records the model we build to.
+> Status: **as-built for build 0.1.1; bench verification pending.** All Tier 1–4 objects exist in
+> `src/` and compile clean (PNut-ts). The three-cog wiring **is now assembled** —
+> `src/isp_robot_dog_top.spin2` `cogspin`s the backend (cog 1) and the IO cog (cog 2) and runs a
+> scripted orchestrator on cog 0 over mailboxes A + B (the real Wi-Fi/serial command link is still
+> deferred). The IO cog's **smart-pin ultrasonic + non-blocking buzzer + frame-stepped LED** are
+> built and launched. The smooth-motion engine + full gait catalog + IMU static leveling are
+> implemented. The IK/gait/timing math and the integrated smart-pin ranging path remain flagged
+> **⚠ verify** pending the bench playbook. The behavioral contract is specified in
+> [`spec/P2-RobotDog-Specifications.md`](spec/P2-RobotDog-Specifications.md).
 
 ---
 
@@ -61,6 +65,11 @@ Two service cogs by resource domain (backend = I²C, IO = discrete pins), each f
 mailbox from the comms cog. Cogs 3–7 are spare. With cooperative tasks (§3) we are not forced
 to spend a cog per concurrent activity, so we have ample headroom (e.g. a future
 behavior/autonomy cog).
+
+> **As-built (build 0.1.1):** `src/isp_robot_dog_top.spin2` realizes this map — cog 0 runs its
+> `main()`/scripted orchestrator, `cogspin`s `isp_robot_dog.start(13,15)` onto cog 1 and
+> `isp_io_controller.start(8,10,11,9)` onto cog 2. This is the **first launch of the IO cog**. Cog
+> 0 is presently a scripted demo, not yet the real Wi-Fi/serial command link.
 
 ---
 
@@ -293,6 +302,44 @@ frame (a `run()`-equivalent); express poses as N-step lerps and gaits as Cartesi
 — porting `Control.py`'s math. Build this **before** authoring the full motion catalog, since it
 changes how every motion is issued.
 
+### 6.2 Smooth-motion engine (as-built, build 0.1.1)
+
+The §6.1 guide is realized in `src/isp_robot_dog.spin2`. What the engine actually does:
+
+- **Body-level state.** Foot targets in mm, leg order **FL=0 / BL=1 / FR=2 / BR=3**: `curX/Y/Z[]`
+  (where the feet are now), `tgtX/Y/Z[]` (where the active move eases to), `startX/Y/Z[]` (the lerp
+  anchor at move start), plus head `cur/tgt/start`. `setCur()` writes a foot's *current* directly
+  (gaits/gestures); `setLegTarget()` sets a *target* (poses).
+- **Fixed-rate frame loop.** `motionTask` is CT-gated at `FRAME_HZ = 50` (wrap-safe `getct()`
+  deadline). Each due frame calls `advanceFrame()` → `advanceGait` / `advanceGesture` / `stepPose`
+  by mode, then `tasknext()` so dispatch/sense keep running. Servo writes always **complete before
+  the yield** — the bus stays coherent with no lock.
+- **Eased poses.** `stepPose()` lerps all 13 joints from `start→tgt` over `moveFrames` sharing one
+  ease factor `easeFactor()` (smoothstep `3s²−2s³`, fixed-point `EASE_ONE = 4096`) via `lerpFix()`.
+  `armMove()` snapshots `start := cur` and arms the move; `beginPoseMove()` adds the head-holds.
+- **Commit + guard.** Every frame ends in `commitCur()`: `guardReach()` clamps each foot to the
+  reachable shell (`REACH_MIN_MM`/`REACH_MAX_MM = 25/130`, ported `checkPoint`) then `writeLegs()`
+  drives all four legs. Belt-and-suspenders with `isp_leg`'s 0–180° clamp.
+- **Blending.** Poses snapshot `start := cur` from the live pose, so a new command eases from
+  wherever the body is — no stop-and-restart. `CMD_STOP` eases to neutral, interrupting a gait.
+- **Gaits (catalog).** `advanceGait()` dispatches on `gaitKind` → `gaitLinearFwd`
+  (forward/backward), `gaitSidestep` (step L/R), `gaitTurn(turnSign)` (turn L/R, X/Z coupled).
+  Diagonal pairs A={FL,BR}, B={BL,FR} 180° apart; sinusoid is already smooth so no easing is layered
+  on. `startGait(kind,dir,speedArg)` latches the mode and signed phase step; `setGaitSpeed` applies
+  the **arg0 speed knob** (`0`=default `GAIT_STEP_DEG=15`, else clamp `3..45`). Mapped onto the
+  verified neutral (X=0, Z=±`STANCE_LATERAL_MM`); Freenove's absolute offsets are **not** applied.
+- **Hello gesture.** `advanceHello()` eases the FR foot out over `HELLO_LEADIN_FRAMES=8` (no start
+  snap), oscillates with the `qsin` wave, then `finishGesture()` eases back to stand. `busyFlag`
+  reject-while-busy preserved (D3).
+- **Static leveling.** The neutral stand folds in per-leg foot-Y trims from
+  `isp_calibration.stanceTrimY()` (`setLevelStandTargets`, used by `standPose` and `seedStand`).
+  See [`spec/P2-RobotDog-Specifications.md`](spec/P2-RobotDog-Specifications.md) §5.
+- **Power-on.** `seedStand()` snaps to neutral once (no prior pose to blend from) — the only snap.
+
+> The engine owns interpolation at the **body** level; the per-servo S-curve slew in
+> `isp_i2c_pca9685_servo` is intentionally **not** used (it cannot share one timebase across 13
+> joints). `isp_leg` stays the IK/angle provider.
+
 ---
 
 ## 7. Startup / init sequence
@@ -327,23 +374,34 @@ changes how every motion is issued.
 
 ## 9. Open items / to verify on hardware
 
-- **Leg ↔ channel ↔ side mapping** (README §3) is inferred from Freenove gait logic — meter
-  before trusting.
+**Resolved since the original draft:**
+
+- ✅ **Leg ↔ channel ↔ side mapping** — **verified on hardware 2026-06-01** (FL=4/3/2, BL=7/6/5,
+  BR=8/9/10, FR=11/12/13, head=15); see README §3.
+- ✅ **IO-cog refactors + launch** — `isp_hcsr04` has a non-blocking **smart-pin** ranging path
+  (`startSmart`/`firePing`/`echoReadyMm`), the buzzer is non-blocking (auto-off tick), and the LED
+  is frame-stepped — all three multiplex on `isp_io_controller` (per D7). The **top-level cog
+  launch + mailbox B are assembled** in `src/isp_robot_dog_top.spin2` (the comms loop is still a
+  scripted demo, not the real link).
+
+**Still to verify on the bench (see the verification playbook):**
+
+- **Smooth-motion quality** — stand/sit/relax transitions gapless and blends clean; the "beat
+  Freenove's staccato" bar; each gait + the speed arg behave.
+- **Integrated smart-pin ranging** — the non-blocking path, first exercised by the integrated top,
+  produces fresh `pingSeq` while a gait + LED + beep run (D7 no-stutter).
+- **IMU static leveling** — measure → store → apply → residual ≈ 0; capture the stance-trim values
+  (default 0 today).
 - **Servo write budget:** the seed `write9685OffOnWords` does `waitms(1)` per channel → ~13 ms
   for a full-body update. Batch leg channels 2–13 in one PCA9685 auto-increment burst to
-  collapse this; sets the control-loop ceiling.
+  collapse this; sets the control-loop ceiling vs. the 50 Hz frame rate.
 - **IMU rate vs. servo cadence:** decide whether `senseTask` reads the IMU faster than the
   full-body write rate (read-often / write-on-change) or runs the whole loop at one rate.
 - **Cooperative yield granularity:** tune gait-step size so STOP latency stays small.
 - **`{Spin2_v47}` task table vs inline-PASM** (`$100..$11F` overlap) — watch as task count
   or inline-PASM grows.
-- **IO-cog enabling refactors:** `isp_hcsr04` must move from its current polled echo-wait to a
-  **smart-pin pulse-width measurement** (non-blocking) and the buzzer to a timer/smart-pin
-  tone, so LED + ranging + buzzer multiplex on the one IO cog (per D7). The top-level cog
-  launch (`cogspin` of backend + IO + the comms loop) and mailbox B are not yet assembled.
-- **WS2812 bit timing** in `isp_ws2812` now matches `REF jm_rgbx_pixel` (fixed 1.25 µs cell,
-  400/800 ns high) — only the strip variant remains to confirm on the bench (WS2812 350/700
-  vs WS2812B 400/800).
+- **WS2812 bit timing** in `isp_ws2812` matches `REF jm_rgbx_pixel` (fixed 1.25 µs cell,
+  400/800 ns high) — only the strip variant remains to confirm (WS2812 350/700 vs WS2812B 400/800).
 
 ---
 

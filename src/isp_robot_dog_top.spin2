@@ -1,0 +1,245 @@
+{Spin2_v47}
+'' =================================================================================================
+''
+''   File....... isp_robot_dog_top.spin2
+''   Purpose.... Integrated 3-cog runtime top object: launch the backend body-control cog and the
+''               discrete-pin IO cog, then run a SCRIPTED demo orchestrator that drives both
+''               mailboxes concurrently -- LED animation + live ranging + motion + a beep, all at
+''               once, proving the cogs coexist with no stutter (Theory-of-Ops D7).
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... June 2026
+''   Updated.... 02 June 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   This is the FIRST object to realize the documented 3-cog runtime (Theory-of-Ops sec.2 cog map):
+
+     cog0  this object's main() -- the comms/orchestrator (here: a scripted demo, not yet a
+           real Wi-Fi/serial command link -- that link is deferred)
+     cog1  isp_robot_dog.start(SCL,SDA) -- the I2C bus owner: legs + head + IMU + battery,
+           the smooth-motion engine, commanded through mailbox A (dog.postCommand)
+     cog2  isp_io_controller.start(...) -- the discrete-pin owner: WS2812 LED, buzzer and the
+           non-blocking smart-pin ultrasonic, commanded through mailbox B (io.postCommand)
+
+   main() owns NO peripheral pins -- it only posts to the two mailboxes and reads telemetry
+   getters, all of which touch shared hub DAT only (never a bus or pin), so the three cogs never
+   contend. The orchestrator interleaves mailbox-A motion commands with mailbox-B IO commands and
+   samples telemetry from both, demonstrating concurrent operation with no hitching.
+
+   >> LIFT / SUPPORT THE ROBOT before running << -- on launch cog1 calibrates the gyro (hold
+   still) and STANDS via IK, then the demo walks gaits.
+
+   BENCH NOTE: cog2's non-blocking smart-pin ranging path (sonic.startSmart/firePing/echoReadyMm)
+   has only ever run via the BLOCKING menu test (isp_dog_bringup readDistanceMm). This top is the
+   first launch of the IO cog and the first integrated exercise of that path -- treat live ranging
+   here as UNPROVEN on hardware until the sec.7 bench playbook confirms it.
+
+   Download-to-RAM and run (DEBUG @ 2 Mbaud):
+     pnut-ts -d -q src/isp_robot_dog_top.spin2
+     pnut-term-ts -r src/isp_robot_dog_top.bin -b 2000000 --headless --end-marker "DEMO_DONE" --timeout 90
+}
+
+CON ' ---- clock / debug ----
+  _clkfreq      = 200_000_000
+  DEBUG_BAUD    = 2_000_000
+
+CON ' ---- as-built pin map (DOCs/P2_MIGRATION_WIRING.md sec.3; verified on hardware 2026-05-31) ----
+  PIN_SCL       = 13                  ' I2C clock  (mailbox A bus, cog1)
+  PIN_SDA       = 15                  ' I2C data
+  PIN_WS2812    = 8                   ' LED data   (mailbox B discrete pins, cog2)
+  PIN_ECHO      = 9                   ' HC-SR04 ECHO (in, ~1 kohm series R)
+  PIN_BUZZER    = 10                  ' buzzer
+  PIN_TRIG      = 11                  ' HC-SR04 TRIG
+
+CON ' ---- LED ring mode IDs (mirror of isp_led_ring MODE_*; passed as IO_LED_MODE arg0) ----
+  LED_MODE_OFF           = 0
+  LED_MODE_SOLID         = 1
+  LED_MODE_WIPE          = 2
+  LED_MODE_CHASE         = 3
+  LED_MODE_RAINBOW       = 4
+  LED_MODE_RAINBOW_CYCLE = 5
+
+CON ' ---- packed $RRGGBB colors for IO_LED_SOLID ----
+  COLOR_GREEN   = $00_20_00          ' dim green = "IO cog alive"
+  COLOR_BLUE    = $00_00_30
+
+CON ' ---- demo timing & cogs ----
+  COUNTDOWN_S   = 8                   ' launch countdown (matches test_backend cadence)
+  COG_STACK     = 256                 ' per-launched-cog stack (longs)
+  BACKEND_INIT_MS = 5000             ' allow cog1 init + gyro cal + initial STAND
+  SAMPLE_COUNT  = 6                   ' telemetry samples per concurrent phase
+  SAMPLE_MS     = 500                 ' spacing between telemetry samples
+
+OBJ
+
+  dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
+  io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B
+  version : "isp_version"                                    ' firmware version constants
+
+VAR
+
+  long  backendStack[COG_STACK]                              ' cog1 stack
+  long  ioStack[COG_STACK]                                   ' cog2 stack
+  long  lastPingSeq                                          ' previous ranging seq (freshness detector)
+
+PUB main() | backendCog, ioCog
+'' Launch the backend and IO cogs, then run the scripted concurrent demo (never returns).
+
+    waitms(100)
+    DEBUG("=== P2 RoboDog 3-COG INTEGRATION demo ===")
+    DEBUG("    firmware v", udec_(version.FW_VERSION_MAJOR), ".", udec_(version.FW_VERSION_MINOR), ".", udec_(version.FW_VERSION_PATCH))
+    DEBUG("    cog0 orchestrator (this) | cog1 backend/I2C | cog2 IO/discrete pins")
+    DEBUG(">> LIFT / SUPPORT THE ROBOT. cog1 will calibrate gyro (hold still) then STAND, then walk. <<")
+    countdown()
+
+    ' ---- bring cog2 (IO) up first: it owns no shared bus, so it is alive instantly ----
+    ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
+    if ioCog < 0
+        abortDemo(string("FAILED to start IO cog"))
+    DEBUG("IO cog launched in cog ", udec_(ioCog), " (LED P8, buzzer P10, ultrasonic P9/P11)")
+    io.postCommand(io.IO_LED_SOLID, COLOR_GREEN, 0, 0, 0)     ' visible "cog2 alive" before cog1 even inits
+    io.postCommand(io.IO_BUZZ_BEEP, 120, 0, 0, 0)             ' short hello chirp
+
+    ' ---- bring cog1 (backend) up: it owns the I2C bus, inits, calibrates gyro, STANDS ----
+    backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
+    if backendCog < 0
+        abortDemo(string("FAILED to start backend cog"))
+    DEBUG("backend cog launched in cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
+    waitms(BACKEND_INIT_MS)
+    reportTelemetry(string("after init + initial STAND"))
+
+    runConcurrentDemo()
+    windDown()
+
+    DEBUG("3-cog integration demo complete")
+    DEBUG("DEMO_DONE")
+    repeat
+
+PRI runConcurrentDemo()
+' The heart of D7: LED animation + live ranging + motion + a beep, all running at once across the
+' two mailboxes, sampled repeatedly to show neither cog stutters.
+
+    ' ---- Phase 1: IO alone -- start animated LED + periodic ranging; prove ranging goes live ----
+    DEBUG("-- Phase 1: IO concurrency -- LED rainbow + periodic ranging (smart-pin path, UNPROVEN on hw) --")
+    lastPingSeq := io.getPingSeq()
+    io.postCommand(io.IO_LED_MODE, LED_MODE_RAINBOW_CYCLE, 0, 0, 0)   ' animated -> ledBusy
+    io.postCommand(io.IO_RANGE_ON, 0, 0, 0, 0)                        ' 0 = default cadence
+    sampleTelemetry(string("LED animating + ranging, dog idle"))
+
+    ' ---- Phase 2: add MOTION -- a forward gait runs while LED animates, ranging pings, plus a beep ----
+    DEBUG("-- Phase 2: FULL concurrency -- forward gait + LED animation + live ranging + a beep --")
+    dog.postCommand(dog.CMD_FORWARD, 0, 0, 0, 0)             ' latched gait, default speed
+    io.postCommand(io.IO_BUZZ_BEEP, 150, 0, 0, 0)            ' beep overlaps the gait + LED
+    sampleTelemetry(string("gait + LED + ranging + beep -- all at once"))
+
+    ' ---- Phase 3: change gait + LED mode + head pan + beep, still ranging -- nothing stalls ----
+    DEBUG("-- Phase 3: turn-left gait + LED chase + head pan + beep, ranging still live --")
+    dog.postCommand(dog.CMD_TURN_LEFT, 0, 0, 0, 0)          ' blend into a different gait
+    io.postCommand(io.IO_LED_MODE, LED_MODE_CHASE, 0, 0, 0)
+    io.postCommand(io.IO_BUZZ_BEEP, 100, 0, 0, 0)
+    dog.postCommand(dog.CMD_HEAD, 60, 0, 0, 0)             ' head pans while the legs walk
+    sampleTelemetry(string("turn gait + head pan + LED chase + ranging"))
+
+    ' ---- Phase 4: STOP -- gait eases to the neutral stance while IO keeps animating + ranging ----
+    DEBUG("-- Phase 4: STOP -- gait eases to neutral; IO keeps animating + ranging --")
+    dog.postCommand(dog.CMD_STOP, 0, 0, 0, 0)
+    dog.postCommand(dog.CMD_HEAD, 90, 0, 0, 0)            ' recenter the head
+    sampleTelemetry(string("eased to neutral, IO still busy"))
+
+PRI windDown()
+' Quiesce both cogs cleanly: relax the body, silence/blank IO. Cogs keep running (no shutdown).
+
+    DEBUG("-- wind down: RELAX + ranging off + LED off --")
+    dog.postCommand(dog.CMD_RELAX, 0, 0, 0, 0)
+    io.postCommand(io.IO_RANGE_OFF, 0, 0, 0, 0)
+    io.postCommand(io.IO_BUZZ_OFF, 0, 0, 0, 0)
+    io.postCommand(io.IO_LED_OFF, 0, 0, 0, 0)
+    waitms(2000)
+    reportTelemetry(string("quiesced"))
+
+PRI sampleTelemetry(pPhaseStr) | i
+' Sample BOTH mailboxes SAMPLE_COUNT times across a phase, so concurrent progress is visible:
+' the dog mode/attitude advancing AND the ranging seq bumping (fresh pings) under the same load.
+'
+' @param pPhaseStr - label for this phase
+' @local i - sample index
+
+    DEBUG("   [", zstr_(pPhaseStr), "]")
+    repeat i from 1 to SAMPLE_COUNT
+        waitms(SAMPLE_MS)
+        reportTelemetry(0)
+
+PRI reportTelemetry(pLabelStr) | milliVolts, mode, pitchDeg, rollDeg, distMm, seq, bFresh, bLed
+' Read and print a snapshot of BOTH mailboxes. A 'fresh' flag shows the ranging seq advanced since
+' the last sample -- proof the IO cog is still pinging while the backend cog runs motion.
+'
+' @param pLabelStr - optional context label (0 = none, used inside sampleTelemetry)
+' @local milliVolts/mode/pitchDeg/rollDeg - mailbox-A (backend) telemetry
+' @local distMm/seq - mailbox-B (IO) telemetry
+' @local bFresh - TRUE if a new ranging reading arrived since the last report
+' @local bLed - TRUE while an animated LED mode is running
+
+    milliVolts := dog.getBatteryMilliVolts()
+    mode := dog.getModeState()
+    pitchDeg, rollDeg := dog.getAttitude()
+    distMm := io.getDistanceMm()
+    seq := io.getPingSeq()
+    bFresh := (seq <> lastPingSeq)
+    lastPingSeq := seq
+    bLed := io.isLedBusy()
+
+    if pLabelStr <> 0
+        DEBUG("   telem [", zstr_(pLabelStr), "]")
+    DEBUG("     A: batt=", udec_(milliVolts), " mV  mode=", udec_(mode), "  tilt p=", sdec_(pitchDeg), " r=", sdec_(rollDeg))
+    DEBUG("     B: dist=", sdec_(distMm), " mm  pingSeq=", udec_(seq), "  fresh=", udec_(bFresh ? 1 : 0), "  ledBusy=", udec_(bLed ? 1 : 0))
+
+PRI countdown() | i
+' Launch countdown so the operator can position/support the robot.
+'
+' @local i - seconds remaining
+
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  launch in ", udec_(i), " s ...")
+        waitms(1000)
+
+PRI abortDemo(pReasonStr)
+' Report a fatal launch failure and halt.
+'
+' @param pReasonStr - human-readable reason
+
+    DEBUG(zstr_(pReasonStr))
+    DEBUG("DEMO_DONE")
+    repeat
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

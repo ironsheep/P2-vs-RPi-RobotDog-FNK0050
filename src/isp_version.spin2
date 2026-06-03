@@ -23,7 +23,7 @@ CON ' ---- firmware version ----
   ' Semantic version MAJOR.MINOR.PATCH of the Robot Dog P2 firmware:
   FW_VERSION_MAJOR = 0
   FW_VERSION_MINOR = 1
-  FW_VERSION_PATCH = 0
+  FW_VERSION_PATCH = 1
 
 PUB null()
 '' This is not a top-level object.
