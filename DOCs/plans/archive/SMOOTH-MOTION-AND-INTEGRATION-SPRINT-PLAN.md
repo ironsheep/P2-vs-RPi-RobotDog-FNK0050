@@ -2,6 +2,10 @@
 
 # Smooth-Motion Engine + 3-Cog Integration + IMU Leveling — Sprint Plan
 
+> **🏁 CLOSED 2026-06-03** — all 7 sections SHIPPED (build 0.1.1). Audit:
+> [`archive/2026-06-03-SMOOTH-MOTION-AND-INTEGRATION-CLOSEOUT.md`](2026-06-03-SMOOTH-MOTION-AND-INTEGRATION-CLOSEOUT.md).
+> Code-complete + compile-clean (39/39); on-hardware behavioral verification pending the bench playbook.
+
 > **Project:** P2 Robot Dog (FNK0050 → Propeller 2 port) · firmware in Spin2/PASM2
 > **Plan type:** sprint plan (a ship commitment — real code changes)
 > **Build version:** ships as **0.1.1** (agreed at sprint-start; `FW_VERSION` in `src/isp_version.spin2`, from `0.1.0`).
