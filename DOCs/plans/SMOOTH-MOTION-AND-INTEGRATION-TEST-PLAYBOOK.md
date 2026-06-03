@@ -59,12 +59,23 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --end-marker "<MARKER>" -
 
 | Driver | End-marker | Timeout | Proves (plan §) |
 |---|---|---|---|
-| `src/test_backend.spin2`        | `TEST_DONE` | 70  | engine smoothness + eased poses (§1, §2) |
-| `src/test_level.spin2`          | `TEST_DONE` | 70  | IMU static leveling: measure → trim → re-measure (§5) |
-| `src/test_gaits.spin2`          | `TEST_DONE` | 120 | full gait catalog + speed knob (§3) |
-| `src/isp_robot_dog_top.spin2`   | `DEMO_DONE` | 90  | 3-cog concurrency + blend + smart-pin ranging (§4, §2-blend) |
+| `src/test_dog_stand.spin2`      | `STAND_DONE` | 75  | engine smoothness + eased poses (§1, §2) |
+| `src/test_dog_level.spin2`      | `LEVEL_DONE` | 80  | IMU static leveling: measure → trim → re-measure (§5) |
+| `src/test_dog_gaits.spin2`      | `GAITS_DONE` | 130 | full gait catalog + speed knob (§3) |
+| `src/isp_robot_dog_top.spin2`   | `DEMO_DONE`  | 90  | 3-cog concurrency + blend + smart-pin ranging (§4, §2-blend) |
 
 Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers inline.
+
+> **Production-shape testing (topology, not just the command path).** **Every** driver above
+> launches the **real 3-cog shape** — cog0 test facility, cog1 backend/I²C (motors + head + IMU +
+> battery + the motion engine), cog2 IO/discrete pins (LED + buzzer + ultrasonic). No test ever
+> runs a non-production cog shape. Isolation comes from **what cog0 commands**, not from omitting a
+> cog: the motion-only drivers (`test_dog_stand` / `test_dog_level` / `test_dog_gaits`) keep cog2
+> **present but quiescent** — a static dim-green "IO cog alive" LED, and **ranging dormant** (the
+> unproven smart-pin path never fires because no `IO_RANGE_ON` is sent). Only `isp_robot_dog_top`
+> activates mailbox B (LED animation + ranging + beep). So the bring-up ladder below adds exactly
+> one new behavior per rung while the topology stays constant — a new failure at rung N is
+> attributable to that rung's added behavior, not to a changed cog shape.
 
 ---
 
@@ -78,8 +89,9 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   cd "$(git rev-parse --show-toplevel)"
   rc=0; for f in src/*.spin2; do pnut-ts -q "$f" || rc=1; done; rm -f src/*.bin; echo "rc=$rc"
   ```
-- **Expected:** every object compiles, `rc=0`, no errors/warnings (39/39 with this sprint's
-  `test_gaits.spin2` added). Any failure ⇒ fix before flashing anything.
+- **Expected:** every object compiles, `rc=0`, no errors/warnings (39/39 — the three
+  production-shape scenario tops `test_dog_stand`/`test_dog_level`/`test_dog_gaits` replaced the
+  retired single-cog harnesses). Any failure ⇒ fix before flashing anything.
 - **Pass/fail:** `[ ]`   objects compiled: ____ / ____
 
 ---
@@ -88,10 +100,13 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 
 - **Verifies:** §1 fixed-rate eased engine + §2 poses retrofitted onto it — RELAX→STAND→SIT→STAND
   and a head pan, all **gapless** (the "beat Freenove's staccato" bar). `«#3320»`, `«#3321»`.
-- **Targets:** 1 P2 bench unit, all 13 servos, battery, Load ON.
-- **Driver:** `src/test_backend.spin2` → `TEST_DONE` (timeout 70). Sequence it posts:
+- **Targets:** 1 P2 bench unit (full 3-cog shape), all 13 servos, battery, Load ON.
+- **Driver:** `src/test_dog_stand.spin2` → `STAND_DONE` (timeout 75). Launches the full 3-cog shape
+  (cog2 IO quiescent — static dim-green LED, ranging dormant), then posts on mailbox A:
   init STAND → `CMD_RELAX` → `CMD_STAND` → `CMD_SIT` → `CMD_STAND` → head pan 60/120/90.
 - **Setup:** Robot lifted/supported, held still & level during the "calibrating gyro" countdown.
+  Confirm the console reports "IO cog alive in cog N" and the ring shows a steady dim green (proof
+  the 3-cog shape launched and cog2 is present but idle).
 - **Action:** Flash & run the driver headless. Watch the body through each transition; watch the
   console telemetry (`mode=`, `tilt p/r`). Compare the motion qualitatively against a Freenove
   stock-firmware demo clip.
@@ -106,11 +121,14 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 - **Verifies:** §5 — measure body tilt at the calibrated neutral stand, apply the per-leg foot-Y
   stance trim, confirm residual ≈ 0. `«#3324»`. This exercise also **captures** the stance-trim
   values that get committed to `isp_calibration.spin2`.
-- **Targets:** 1 P2 bench unit, all 12 leg servos, IMU, battery, Load ON.
-- **Driver:** `src/test_level.spin2` → `TEST_DONE` (timeout 70). It echoes the currently-compiled
-  stance trim, commands `CMD_STAND`, settles, then averages `getAttitude()` over 32 samples.
-- **Setup:** **CRITICAL — the body must be on a level surface (or held truly level) and still.**
-  The measurement *is* the tilt of the body relative to gravity; a tilted bench corrupts the trim.
+- **Targets:** 1 P2 bench unit (full 3-cog shape), all 12 leg servos, IMU, battery, Load ON.
+- **Driver:** `src/test_dog_level.spin2` → `LEVEL_DONE` (timeout 80). Launches the full 3-cog shape
+  (cog2 IO quiescent), echoes the currently-compiled stance trim, commands `CMD_STAND`, settles
+  ~6 s, then averages `getAttitude()` over 32 samples.
+- **Setup:** **CRITICAL — the body must measure on its FEET, bearing its own weight, on a
+  KNOWN-LEVEL surface.** Support it for gyro cal + the stand transition, then **set it down level**
+  during the settle window before the measure. A *lifted* measurement reads how your hands hold it,
+  not stance level; a tilted surface corrupts the trim.
 - **Action — measure pass (trim still 0):**
   1. Confirm `isp_calibration` `stancePitchDeg`/`stanceRollDeg` are **0** (the harness prints
      "trim is 0 → this MEASURE is the RAW un-leveled tilt").
@@ -133,11 +151,11 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 
 - **Verifies:** §3 — every gait runs a stable trot in the correct direction, and the speed arg
   visibly changes cadence without losing smoothness. `«#3322»`.
-- **Targets:** 1 P2 bench unit, all 12 leg servos, battery (healthy — gaits draw the most current),
-  Load ON.
-- **Driver:** `src/test_gaits.spin2` → `TEST_DONE` (timeout 120). It posts each latched gait for
-  ~4 s, `CMD_STOP`-easing to neutral between them, then a FORWARD slow (arg0=5) vs fast (arg0=30)
-  speed segment.
+- **Targets:** 1 P2 bench unit (full 3-cog shape), all 12 leg servos, battery (healthy — gaits draw
+  the most current), Load ON.
+- **Driver:** `src/test_dog_gaits.spin2` → `GAITS_DONE` (timeout 130). Launches the full 3-cog shape
+  (cog2 IO quiescent), then posts each latched gait for ~4 s, `CMD_STOP`-easing to neutral between
+  them, then a FORWARD slow (arg0=5) vs fast (arg0=30) speed segment.
 - **Setup:** Robot lifted/supported so the feet swing free; you judge direction by the **swing
   direction of the diagonal trot pairs** (A={FL,BR}, B={BL,FR}, 180° out of phase).
 - **Action:** Flash & run. For each gait segment watch the leg trajectories and the console
@@ -203,7 +221,7 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   a pack has naturally drained near 6.4 V (any motion driver above will do), or on a bench supply
   set just under 6.4 V. Do not deep-discharge a good pack just to test.
 - **Setup:** Pack/supply at/just below ~6.4 V; robot supported.
-- **Action:** Run any motion driver (e.g. `test_backend`) and watch the telemetry `battery=` and
+- **Action:** Run any motion driver (e.g. `test_dog_stand`) and watch the telemetry `battery=` and
   `mode=` once the reading sits below 6400 mV for several samples.
 - **Expected:** After 3 consecutive low reads the body **eases to the relax/tuck pose** (smooth,
   not a snap) and telemetry shows `mode=4` (LOWBATT); it stays latched there.

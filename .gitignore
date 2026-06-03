@@ -246,3 +246,5 @@ logs/
 *.log
 src/pnut-term-settings.json
 src/tests/recordings/catalog.json
+*.gz
+/tasks

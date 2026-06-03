@@ -1,0 +1,114 @@
+{Spin2_v47}
+'' =================================================================================================
+''   File....... test_dog_stand.spin2
+''   Purpose.... POSE/STAND bench scenario in the PRODUCTION 3-cog shape. Launches BOTH service cogs
+''               (cog1 backend/I2C, cog2 IO/discrete pins) exactly as the real runtime does, then the
+''               cog0 test facility drives ONLY mailbox A (poses + head) -- the IO cog stays quiescent
+''               (static "alive" LED, ranging dormant). Isolates the motion engine + eased poses while
+''               testing the real cog topology, never a non-production shape.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  >> LIFT/SUPPORT THE ROBOT << -- on launch cog1 calibrates the gyro (hold still) then STANDS via IK.
+'  cog2 comes up first (owns no shared bus) showing a static dim-green LED = "IO cog alive"; it fires
+'  NO ranging and NO animation, so the unproven smart-pin path stays dormant for this motion-only test.
+'  Run:
+'    pnut-ts -d -q src/test_dog_stand.spin2
+'    pnut-term-ts -r src/test_dog_stand.bin -b 2000000 --headless --end-marker "STAND_DONE" --timeout 75
+
+CON
+  _clkfreq      = 200_000_000
+  DEBUG_BAUD    = 2_000_000
+
+  ' as-built pin map (DOCs/P2_MIGRATION_WIRING.md sec.3; verified 2026-05-31)
+  PIN_SCL       = 13                  ' I2C clock  (cog1, mailbox A)
+  PIN_SDA       = 15                  ' I2C data
+  PIN_WS2812    = 8                   ' LED data   (cog2, mailbox B)
+  PIN_ECHO      = 9                   ' HC-SR04 ECHO (in, ~1 kohm series R)
+  PIN_BUZZER    = 10                  ' buzzer
+  PIN_TRIG      = 11                  ' HC-SR04 TRIG
+
+  COUNTDOWN_S   = 8
+  COG_STACK     = 256
+  INIT_MS       = 5000               ' allow cog1 init + gyro cal + initial STAND
+  COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
+
+OBJ
+  dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
+  io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B (quiescent here)
+  version : "isp_version"
+
+VAR
+  long  backendStack[COG_STACK]
+  long  ioStack[COG_STACK]
+
+PUB main() | backendCog, ioCog
+'' Launch the production 3-cog shape, then drive only poses on mailbox A.
+
+    waitms(100)
+    DEBUG("=== POSE/STAND scenario (production 3-cog shape) ===")
+    DEBUG("    firmware v", udec_(version.FW_VERSION_MAJOR), ".", udec_(version.FW_VERSION_MINOR), ".", udec_(version.FW_VERSION_PATCH))
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. cog1 calibrates gyro (hold still) then STANDS via IK. <<")
+    countdown()
+
+    ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
+    if ioCog < 0
+        abortRun(string("FAILED to start IO cog"))
+    io.postCommand(io.IO_LED_SOLID, COLOR_ALIVE, 0, 0, 0)     ' static "alive" indicator; ranging stays OFF
+    DEBUG("IO cog alive in cog ", udec_(ioCog), " (quiescent: static LED, ranging dormant)")
+
+    backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
+    if backendCog < 0
+        abortRun(string("FAILED to start backend cog"))
+    DEBUG("backend cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
+    waitms(INIT_MS)
+    reportTelemetry()
+
+    DEBUG("-- CMD_RELAX (tuck) --")
+    dog.postCommand(dog.CMD_RELAX, 0, 0, 0, 0)
+    waitms(3000)
+    reportTelemetry()
+
+    DEBUG("-- CMD_STAND (neutral stance) --")
+    dog.postCommand(dog.CMD_STAND, 0, 0, 0, 0)
+    waitms(3000)
+    reportTelemetry()
+
+    DEBUG("-- CMD_SIT --")
+    dog.postCommand(dog.CMD_SIT, 0, 0, 0, 0)
+    waitms(3000)
+    reportTelemetry()
+
+    DEBUG("-- CMD_STAND --")
+    dog.postCommand(dog.CMD_STAND, 0, 0, 0, 0)
+    waitms(3000)
+
+    DEBUG("-- head pan: 60, 120, 90 --")
+    dog.postCommand(dog.CMD_HEAD, 60, 0, 0, 0)
+    waitms(1200)
+    dog.postCommand(dog.CMD_HEAD, 120, 0, 0, 0)
+    waitms(1200)
+    dog.postCommand(dog.CMD_HEAD, 90, 0, 0, 0)
+    waitms(1200)
+
+    DEBUG("pose scenario done")
+    DEBUG("STAND_DONE")
+    repeat
+
+PRI reportTelemetry() | milliVolts, mode, pitchDeg, rollDeg
+' Mailbox-A telemetry snapshot (backend cog).
+
+    milliVolts := dog.getBatteryMilliVolts()
+    mode := dog.getModeState()
+    pitchDeg, rollDeg := dog.getAttitude()
+    DEBUG("   telem: battery=", udec_(milliVolts), " mV  mode=", udec_(mode), "  tilt p=", sdec_(pitchDeg), " r=", sdec_(rollDeg))
+
+PRI countdown() | i
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  launch in ", udec_(i), " s ...")
+        waitms(1000)
+
+PRI abortRun(pReasonStr)
+    DEBUG(zstr_(pReasonStr))
+    DEBUG("STAND_DONE")
+    repeat

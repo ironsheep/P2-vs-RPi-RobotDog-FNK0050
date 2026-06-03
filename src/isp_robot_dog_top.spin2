@@ -69,7 +69,7 @@ CON ' ---- packed $RRGGBB colors for IO_LED_SOLID ----
   COLOR_BLUE    = $00_00_30
 
 CON ' ---- demo timing & cogs ----
-  COUNTDOWN_S   = 8                   ' launch countdown (matches test_backend cadence)
+  COUNTDOWN_S   = 8                   ' launch countdown (shared cadence across the bench tops)
   COG_STACK     = 256                 ' per-launched-cog stack (longs)
   BACKEND_INIT_MS = 5000             ' allow cog1 init + gyro cal + initial STAND
   SAMPLE_COUNT  = 6                   ' telemetry samples per concurrent phase

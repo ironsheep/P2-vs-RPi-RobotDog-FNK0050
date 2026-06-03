@@ -263,11 +263,14 @@ pnut-term-ts -r src/test_i2c_scan.bin -b 2000000 --headless \
 
 These were used for the 2026-06-01 bring-up (results: `../DOCs/P2_MIGRATION_WIRING.md` §7). The
 older menu console **`isp_dog_bringup.spin2`** still exists for interactive use against
-[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). `test_backend.spin2` drives the
-backend cog through mailbox A; `test_level.spin2` is the IMU static-leveling measure harness; and
-**`isp_robot_dog_top.spin2`** is the assembled three-cog runtime (backend + IO cogs launched
-together, scripted orchestrator on cog 0). The real frontend comms cog (Wi-Fi/serial command link)
-is still **TODO**.
+[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). The smooth-motion bench tests
+**all run the production 3-cog shape** (both service cogs launched, isolation by what cog 0
+commands — never a single-cog shape): **`test_dog_stand.spin2`** (eased poses), **`test_dog_level.spin2`**
+(IMU static-leveling measure), and **`test_dog_gaits.spin2`** (full gait catalog + speed) each keep
+the IO cog present-but-quiescent (static LED, ranging dormant), while **`isp_robot_dog_top.spin2`**
+is the full concurrency runtime (LED animation + live ranging + motion + beep, scripted orchestrator
+on cog 0). They drive `DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`. The real frontend
+comms cog (Wi-Fi/serial command link) is still **TODO**.
 
 `.bin` / `.lst` / `.obj` outputs are build artifacts — don't commit them.
 

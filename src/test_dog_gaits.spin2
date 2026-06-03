@@ -1,0 +1,112 @@
+{Spin2_v47}
+'' =================================================================================================
+''   File....... test_dog_gaits.spin2
+''   Purpose.... GAIT-CATALOG bench scenario in the PRODUCTION 3-cog shape. Launches BOTH service cogs
+''               (cog1 backend/I2C, cog2 IO/discrete pins) as the real runtime does, then the cog0 test
+''               facility drives every gait + the speed knob through mailbox A. The IO cog stays
+''               quiescent (static LED, ranging dormant) so the gait behavior is isolated.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  >> LIFT/SUPPORT THE ROBOT << -- on launch cog1 calibrates the gyro (hold still) then STANDS via IK;
+'  then each latched gait runs ~4 s, CMD_STOP-easing to neutral between them. The speed segment shows
+'  arg0 (deg/frame) changing cadence: slow (5) then fast (30). Run:
+'    pnut-ts -d -q src/test_dog_gaits.spin2
+'    pnut-term-ts -r src/test_dog_gaits.bin -b 2000000 --headless --end-marker "GAITS_DONE" --timeout 130
+
+CON
+  _clkfreq      = 200_000_000
+  DEBUG_BAUD    = 2_000_000
+
+  PIN_SCL       = 13
+  PIN_SDA       = 15
+  PIN_WS2812    = 8
+  PIN_ECHO      = 9
+  PIN_BUZZER    = 10
+  PIN_TRIG      = 11
+
+  COUNTDOWN_S   = 8
+  COG_STACK     = 256
+  INIT_MS       = 5000               ' allow cog1 init + gyro cal + initial STAND
+  GAIT_MS       = 4000               ' run each gait long enough to judge direction + smoothness
+  SETTLE_MS     = 2500               ' STOP-ease back to neutral between gaits
+  SPEED_SLOW    = 5                  ' deg/frame (smooth, slow cadence)
+  SPEED_FAST    = 30                 ' deg/frame (brisk cadence)
+  COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
+
+OBJ
+  dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
+  io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B (quiescent here)
+
+VAR
+  long  backendStack[COG_STACK]
+  long  ioStack[COG_STACK]
+
+PUB main() | backendCog, ioCog
+'' Launch the production 3-cog shape, then drive every gait + the speed knob on mailbox A.
+
+    waitms(100)
+    DEBUG("=== GAIT CATALOG scenario (production 3-cog shape) ===")
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. cog1 calibrates gyro (hold still) then STANDS via IK. <<")
+    countdown()
+
+    ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
+    if ioCog < 0
+        abortRun(string("FAILED to start IO cog"))
+    io.postCommand(io.IO_LED_SOLID, COLOR_ALIVE, 0, 0, 0)     ' static "alive" indicator; ranging stays OFF
+    DEBUG("IO cog alive in cog ", udec_(ioCog), " (quiescent: static LED, ranging dormant)")
+
+    backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
+    if backendCog < 0
+        abortRun(string("FAILED to start backend cog"))
+    DEBUG("backend cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
+    waitms(INIT_MS)
+    reportTelemetry()
+
+    ' ---- the six gaits, each latched then eased to neutral (default speed, arg0 = 0) ----
+    runGait(string("FORWARD"),    dog.CMD_FORWARD,    0)
+    runGait(string("BACKWARD"),   dog.CMD_BACKWARD,   0)
+    runGait(string("TURN LEFT"),  dog.CMD_TURN_LEFT,  0)
+    runGait(string("TURN RIGHT"), dog.CMD_TURN_RIGHT, 0)
+    runGait(string("STEP LEFT"),  dog.CMD_STEP_LEFT,  0)
+    runGait(string("STEP RIGHT"), dog.CMD_STEP_RIGHT, 0)
+
+    ' ---- speed knob: same gait (FORWARD), slow then fast -- cadence visibly changes ----
+    DEBUG("-- SPEED knob: FORWARD slow (arg0=", udec_(SPEED_SLOW), ") then fast (arg0=", udec_(SPEED_FAST), ") --")
+    runGait(string("FORWARD @slow"), dog.CMD_FORWARD, SPEED_SLOW)
+    runGait(string("FORWARD @fast"), dog.CMD_FORWARD, SPEED_FAST)
+
+    DEBUG("gait catalog scenario done")
+    DEBUG("GAITS_DONE")
+    repeat
+
+PRI runGait(pNameStr, gaitCmd, speedArg)
+' Post one latched gait, let it run, report mode (expect MODE_GAITING=1), then STOP-ease to neutral.
+'
+' @param pNameStr - human label for this gait
+' @param gaitCmd - the CMD_* gait id
+' @param speedArg - arg0 speed (deg/frame, 0 = default)
+
+    DEBUG("-- gait: ", zstr_(pNameStr), " (cmd=", udec_(gaitCmd), " speed=", udec_(speedArg), ") --")
+    dog.postCommand(gaitCmd, speedArg, 0, 0, 0)
+    waitms(GAIT_MS)
+    reportTelemetry()
+    dog.postCommand(dog.CMD_STOP, 0, 0, 0, 0)                 ' eases to neutral stance (no snap)
+    waitms(SETTLE_MS)
+    reportTelemetry()
+
+PRI reportTelemetry() | milliVolts, mode, pitchDeg, rollDeg
+    milliVolts := dog.getBatteryMilliVolts()
+    mode := dog.getModeState()
+    pitchDeg, rollDeg := dog.getAttitude()
+    DEBUG("   telem: battery=", udec_(milliVolts), " mV  mode=", udec_(mode), "  tilt p=", sdec_(pitchDeg), " r=", sdec_(rollDeg))
+
+PRI countdown() | i
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  launch in ", udec_(i), " s ...")
+        waitms(1000)
+
+PRI abortRun(pReasonStr)
+    DEBUG(zstr_(pReasonStr))
+    DEBUG("GAITS_DONE")
+    repeat

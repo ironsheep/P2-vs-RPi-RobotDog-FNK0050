@@ -183,8 +183,9 @@ animated.
 A **static** measure → store → apply trim that makes the body stand level at neutral (not a live
 closed loop).
 
-- **Measure:** `src/test_level.spin2` commands the calibrated neutral stand, lets it settle, and
-  averages `getAttitude()` over many samples → the measured pitch/roll ("how level is it").
+- **Measure:** `src/test_dog_level.spin2` (production 3-cog shape, IO cog quiescent) commands the
+  calibrated neutral stand, lets it settle, and averages `getAttitude()` over many samples → the
+  measured pitch/roll ("how level is it").
 - **Store:** the measured pitch/roll are captured into `isp_calibration` (`stancePitchDeg`,
   `stanceRollDeg`) the same way the servo trims were — metered values committed to source.
 - **Apply:** `isp_calibration.stanceTrimY(legIdx)` converts the stored tilt into a per-leg foot-Y
@@ -192,7 +193,7 @@ closed loop).
   roll over the lateral half-span (`HALF_BODY_WIDTH_MM = 76`), small-angle `ΔY = lever·deg/57`. The
   backend folds these deltas into the neutral stand (`setLevelStandTargets`, used by both the eased
   `standPose` and power-on `seedStand`).
-- **Confirm:** re-run `test_level` after storing → residual tilt should be ≈ 0.
+- **Confirm:** re-run `test_dog_level` after storing → residual tilt should be ≈ 0.
 
 Sign convention (confirm on bench): **+pitch = front high** → lower front, raise back; **+roll =
 left high** → lower left, raise right. Both trims default **0**, so the stance is unchanged until

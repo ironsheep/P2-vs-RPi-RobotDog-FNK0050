@@ -53,8 +53,8 @@ DAT ' ---- per-joint servo trims, degrees (METERED 2026-06-01) ----
             long   -5,   0, -10    ' [3] RIGHT BACK  (BR) ch 8/9/10
 
 DAT ' ---- static stance trim: body tilt measured at the neutral stand (degrees) ----
-  ' MEASURE on the bench with src/test_level.spin2 (posts CMD_STAND, averages getAttitude()), then
-  ' paste the measured pitch/roll here and rebuild; re-run test_level to confirm residual ~= 0.
+  ' MEASURE on the bench with src/test_dog_level.spin2 (posts CMD_STAND, averages getAttitude()), then
+  ' paste the measured pitch/roll here and rebuild; re-run test_dog_level to confirm residual ~= 0.
   ' Sign convention (confirm on bench): +pitch = nose/front HIGH, +roll = LEFT side HIGH.
   ' Both 0 until metered -> stanceTrimY() returns 0 and the stance is unchanged.
   stancePitchDeg  long  0          ' measured fore/aft tilt at neutral (deg)

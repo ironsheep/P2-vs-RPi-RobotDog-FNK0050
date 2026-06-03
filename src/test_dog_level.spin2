@@ -1,0 +1,130 @@
+{Spin2_v47}
+'' =================================================================================================
+''   File....... test_dog_level.spin2
+''   Purpose.... IMU STATIC-LEVELING bench scenario in the PRODUCTION 3-cog shape. Launches BOTH service
+''               cogs (cog1 backend/I2C, cog2 IO/discrete pins) as the real runtime does, then the cog0
+''               test facility commands the calibrated neutral STAND on mailbox A, lets it settle, and
+''               averages getAttitude() to MEASURE body tilt at neutral -- the "how level is it" answer.
+''               The IO cog stays quiescent (static LED, ranging dormant) so the measurement is clean.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  >> LIFT/SUPPORT THE ROBOT during gyro cal + the stand transition (servos move). THEN set it down on
+'  a KNOWN-LEVEL surface, on its feet, bearing its own weight, BEFORE the measure -- the trim corrects
+'  a weight-bearing stand, so a lifted measurement reads your hands, not stance level. Run:
+'    pnut-ts -d -q src/test_dog_level.spin2
+'    pnut-term-ts -r src/test_dog_level.bin -b 2000000 --headless --end-marker "LEVEL_DONE" --timeout 80
+'
+'  WORKFLOW (measure -> apply -> re-measure):
+'    1. Run with stancePitchDeg/stanceRollDeg = 0 -> read the MEASURED (raw, un-leveled) tilt.
+'    2. Paste those numbers into isp_calibration.spin2, rebuild.
+'    3. Re-run -> the MEASURED tilt is now the RESIDUAL; it should be near 0. If it grew, negate.
+
+CON
+  _clkfreq      = 200_000_000
+  DEBUG_BAUD    = 2_000_000
+
+  PIN_SCL       = 13
+  PIN_SDA       = 15
+  PIN_WS2812    = 8
+  PIN_ECHO      = 9
+  PIN_BUZZER    = 10
+  PIN_TRIG      = 11
+
+  COUNTDOWN_S   = 8
+  COG_STACK     = 256
+  INIT_MS       = 5000               ' allow cog1 init + gyro cal + initial STAND
+  SETTLE_MS     = 6000               ' time to set the robot down on a level surface, then settle
+  AVG_SAMPLES   = 32                 ' attitude samples to average
+  SAMPLE_MS     = 50                 ' spacing between attitude samples
+  COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
+
+OBJ
+  dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
+  io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B (quiescent here)
+  cal     : "isp_calibration"                                ' echo the currently-applied stance trim
+
+VAR
+  long  backendStack[COG_STACK]
+  long  ioStack[COG_STACK]
+
+PUB main() | backendCog, ioCog
+'' Launch the production 3-cog shape, then measure body tilt at the calibrated neutral stand.
+
+    waitms(100)
+    DEBUG("=== IMU STATIC-LEVELING scenario (production 3-cog shape) ===")
+    DEBUG(">> LIFT/SUPPORT for gyro cal + stand; THEN set down LEVEL on its feet before the measure. <<")
+    countdown()
+
+    ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
+    if ioCog < 0
+        abortRun(string("FAILED to start IO cog"))
+    io.postCommand(io.IO_LED_SOLID, COLOR_ALIVE, 0, 0, 0)     ' static "alive" indicator; ranging stays OFF
+    DEBUG("IO cog alive in cog ", udec_(ioCog), " (quiescent: static LED, ranging dormant)")
+
+    backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
+    if backendCog < 0
+        abortRun(string("FAILED to start backend cog"))
+    DEBUG("backend cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
+    waitms(INIT_MS)
+
+    reportStoredTrim()
+
+    DEBUG("-- CMD_STAND (calibrated neutral); SET DOWN LEVEL now, then settle + MEASURE --")
+    dog.postCommand(dog.CMD_STAND, 0, 0, 0, 0)
+    waitms(SETTLE_MS)
+    measureTilt()
+
+    DEBUG("LEVEL_DONE")
+    repeat
+
+PRI reportStoredTrim() | pitchDeg, rollDeg
+' Echo the stance trim currently compiled into isp_calibration so the run is self-documenting.
+'
+' @local pitchDeg/rollDeg - the stored measured tilt the trim corrects
+
+    pitchDeg, rollDeg := cal.stanceTrimDegrees()
+    DEBUG("   applied stance trim: pitch=", sdec_(pitchDeg), " deg  roll=", sdec_(rollDeg), " deg")
+    DEBUG("   per-leg foot-Y delta (mm): FL=", sdec_(cal.stanceTrimY(0)), " BL=", sdec_(cal.stanceTrimY(1)), " FR=", sdec_(cal.stanceTrimY(2)), " BR=", sdec_(cal.stanceTrimY(3)))
+    if pitchDeg == 0 and rollDeg == 0
+        DEBUG("   (trim is 0 -> this MEASURE is the RAW un-leveled tilt; capture it into isp_calibration)")
+    else
+        DEBUG("   (trim applied -> this MEASURE is the RESIDUAL tilt; expect ~0)")
+
+PRI measureTilt() | i, pitchDeg, rollDeg, sumPitch, sumRoll, minP, maxP, minR, maxR
+' Average getAttitude() over AVG_SAMPLES; report tenths of a degree + min/max (sensor noise).
+'
+' @local i - sample index
+' @local pitchDeg/rollDeg - one attitude sample
+' @local sumPitch/sumRoll - running sums
+' @local minP/maxP/minR/maxR - observed extremes
+
+    sumPitch := 0
+    sumRoll := 0
+    pitchDeg, rollDeg := dog.getAttitude()
+    minP := maxP := pitchDeg
+    minR := maxR := rollDeg
+    repeat i from 1 to AVG_SAMPLES
+        pitchDeg, rollDeg := dog.getAttitude()
+        sumPitch += pitchDeg
+        sumRoll += rollDeg
+        minP := minP <# pitchDeg
+        maxP := maxP #> pitchDeg
+        minR := minR <# rollDeg
+        maxR := maxR #> rollDeg
+        waitms(SAMPLE_MS)
+
+    DEBUG("   MEASURED tilt over ", udec_(AVG_SAMPLES), " samples:")
+    DEBUG("     pitch avg=", sdec_(sumPitch / AVG_SAMPLES), " deg (x10=", sdec_((sumPitch * 10) / AVG_SAMPLES), ")  min=", sdec_(minP), " max=", sdec_(maxP))
+    DEBUG("     roll  avg=", sdec_(sumRoll / AVG_SAMPLES), " deg (x10=", sdec_((sumRoll * 10) / AVG_SAMPLES), ")  min=", sdec_(minR), " max=", sdec_(maxR))
+    DEBUG("   -> paste pitch/roll avg into isp_calibration stancePitchDeg/stanceRollDeg, rebuild, re-run.")
+
+PRI countdown() | i
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  launch in ", udec_(i), " s ...")
+        waitms(1000)
+
+PRI abortRun(pReasonStr)
+    DEBUG(zstr_(pReasonStr))
+    DEBUG("LEVEL_DONE")
+    repeat

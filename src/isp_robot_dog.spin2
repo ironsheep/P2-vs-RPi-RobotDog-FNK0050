@@ -678,7 +678,7 @@ PRI lerpFix(fromVal, toVal, e) : val
 PRI setLevelStandTargets() | idx, lateralZ
 ' Set the four neutral-stand foot targets, folding each leg's static leveling trim into footY so
 ' the body stands level. The per-leg deltas come from isp_calibration.stanceTrimY() and are 0 until
-' the neutral tilt is metered (src/test_level.spin2) -> stance is unchanged until then.
+' the neutral tilt is metered (src/test_dog_level.spin2) -> stance is unchanged until then.
 '
 ' Local Variables:
 ' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
