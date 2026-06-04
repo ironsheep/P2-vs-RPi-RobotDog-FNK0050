@@ -327,6 +327,38 @@ PUB getHead() : curDeg, tgtDeg
     curDeg := curHeadDeg
     tgtDeg := tgtHeadDeg
 
+PUB dumpState(pLabelStr) | idx, tx, ty, tz, cx, cy, cz, ca, fa, ta
+'' Print one labelled diagnostic block: move kind/mode/tilt, then per-leg target+current foot XYZ and
+'' last servo angles (FL/BL/FR/BR), then head + battery. Reads this object's telemetry DAT directly,
+'' so every bench top gets identical diagnostics by calling dog.dumpState(...). Call from the comms/
+'' test cog (it emits DEBUG from the caller's cog).
+''
+'' @param pLabelStr - context label for this dump
+'' @local idx - leg index; tx/ty/tz target; cx/cy/cz current; ca/fa/ta servo angles
+
+    DEBUG("== ", zstr_(pLabelStr), "  (moveKind=", udec_(moveKind), " mode=", udec_(modeState), " tilt p=", sdec_(attPitch), " r=", sdec_(attRoll), ") ==")
+    repeat idx from 0 to NUM_LEGS - 1
+        tx := tgtX[idx]
+        ty := tgtY[idx]
+        tz := tgtZ[idx]
+        cx := curX[idx]
+        cy := curY[idx]
+        cz := curZ[idx]
+        ca := legCoxaDeg[idx]
+        fa := legFemurDeg[idx]
+        ta := legTibiaDeg[idx]
+        DEBUG("  ", zstr_(legLabel(idx)), " tgt(", sdec_(tx), ",", sdec_(ty), ",", sdec_(tz), ")  cur(", sdec_(cx), ",", sdec_(cy), ",", sdec_(cz), ")  servo c/f/t=", sdec_(ca), "/", sdec_(fa), "/", sdec_(ta))
+    DEBUG("  HEAD cur=", sdec_(curHeadDeg), " tgt=", sdec_(tgtHeadDeg), "   battery=", udec_(battMilliVolts), " mV")
+
+PRI legLabel(idx) : pStr
+' Short label for a leg index (0=FL 1=BL 2=FR 3=BR).
+    case idx
+        0: pStr := string("FL")
+        1: pStr := string("BL")
+        2: pStr := string("FR")
+        3: pStr := string("BR")
+        other: pStr := string("??")
+
 PUB enableDebug(bEnable)
 '' Turn on/off this object's debug messaging.
 ''

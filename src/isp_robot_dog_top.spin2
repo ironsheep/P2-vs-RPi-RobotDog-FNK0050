@@ -80,11 +80,16 @@ OBJ
   dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
   io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B
   version : "isp_version"                                    ' firmware version constants
+  stack   : "isp_stack_check"                                ' COG stack-overflow detector
+
+DAT ' ---- cog launch stacks, each followed IMMEDIATELY by its overflow sentinel ----
+  backendStack     LONG  0[COG_STACK]                        ' cog1 stack
+  backendStackMark LONG  stack.DO_NOT_WRITE_MARK
+  ioStack          LONG  0[COG_STACK]                        ' cog2 stack
+  ioStackMark      LONG  stack.DO_NOT_WRITE_MARK
 
 VAR
 
-  long  backendStack[COG_STACK]                              ' cog1 stack
-  long  ioStack[COG_STACK]                                   ' cog2 stack
   long  lastPingSeq                                          ' previous ranging seq (freshness detector)
 
 PUB main() | backendCog, ioCog
@@ -97,10 +102,14 @@ PUB main() | backendCog, ioCog
     DEBUG(">> LIFT / SUPPORT THE ROBOT. cog1 will calibrate gyro (hold still) then STAND, then walk. <<")
     countdown()
 
+    stack.prepStackForCheck(@ioStack, COG_STACK)             ' fill pattern + sentinel BEFORE launch
+    stack.prepStackForCheck(@backendStack, COG_STACK)
+
     ' ---- bring cog2 (IO) up first: it owns no shared bus, so it is alive instantly ----
     ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
     if ioCog < 0
         abortDemo(string("FAILED to start IO cog"))
+    io.setStackCheck(@ioStack, COG_STACK)                    ' IO cog now self-watches its stack
     DEBUG("IO cog launched in cog ", udec_(ioCog), " (LED P8, buzzer P10, ultrasonic P9/P11)")
     io.postCommand(io.IO_LED_SOLID, COLOR_GREEN, 0, 0, 0)     ' visible "cog2 alive" before cog1 even inits
     io.postCommand(io.IO_BUZZ_BEEP, 120, 0, 0, 0)             ' short hello chirp
@@ -109,6 +118,7 @@ PUB main() | backendCog, ioCog
     backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
     if backendCog < 0
         abortDemo(string("FAILED to start backend cog"))
+    dog.setStackCheck(@backendStack, COG_STACK)              ' backend cog now self-watches its stack
     DEBUG("backend cog launched in cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
     waitms(BACKEND_INIT_MS)
     reportTelemetry(string("after init + initial STAND"))
@@ -170,9 +180,10 @@ PRI sampleTelemetry(pPhaseStr) | i
 ' @local i - sample index
 
     DEBUG("   [", zstr_(pPhaseStr), "]")
+    dog.dumpState(pPhaseStr)                                  ' full per-leg diagnostic block, once per phase
     repeat i from 1 to SAMPLE_COUNT
         waitms(SAMPLE_MS)
-        reportTelemetry(0)
+        reportTelemetry(0)                                    ' light A+B samples show ranging/LED progressing
 
 PRI reportTelemetry(pLabelStr) | milliVolts, mode, pitchDeg, rollDeg, distMm, seq, bFresh, bLed
 ' Read and print a snapshot of BOTH mailboxes. A 'fresh' flag shows the ranging seq advanced since
@@ -194,7 +205,7 @@ PRI reportTelemetry(pLabelStr) | milliVolts, mode, pitchDeg, rollDeg, distMm, se
     bLed := io.isLedBusy()
 
     if pLabelStr <> 0
-        DEBUG("   telem [", zstr_(pLabelStr), "]")
+        dog.dumpState(pLabelStr)                              ' full per-leg block on labelled reports (init/windDown)
     DEBUG("     A: batt=", udec_(milliVolts), " mV  mode=", udec_(mode), "  tilt p=", sdec_(pitchDeg), " r=", sdec_(rollDeg))
     DEBUG("     B: dist=", sdec_(distMm), " mm  pingSeq=", udec_(seq), "  fresh=", udec_(bFresh ? 1 : 0), "  ledBusy=", udec_(bLed ? 1 : 0))
 

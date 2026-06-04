@@ -70,7 +70,7 @@ PUB main() | backendCog, ioCog
     dog.setStackCheck(@backendStack, COG_STACK)              ' backend cog now self-watches its stack
     DEBUG("backend cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
     waitms(INIT_MS)
-    reportMove(string("init STAND (power-on seed)"))
+    dog.dumpState(string("init STAND (power-on seed)"))
 
     postAndReport(dog.CMD_RELAX,  0, string("RELAX"))
     postAndReport(dog.CMD_STAND,  0, string("STAND"))
@@ -101,31 +101,7 @@ PRI postAndReport(cmd, arg, pNameStr) | guard
     guard := 0
     repeat until dog.getMoveComplete() or (guard++ > 500)     ' up to ~5 s for the move to finish
         waitms(10)
-    reportMove(pNameStr)
-
-PRI reportMove(pNameStr) | idx, tx, ty, tz, cx, cy, cz, ca, fa, ta, hc, ht
-' Dump the move enum + every leg's target XYZ, current XYZ, and last servo angles, then head+battery.
-'
-' @param pNameStr - label for this dump
-' @local idx - leg index; tx/ty/tz target; cx/cy/cz current; ca/fa/ta servo angles; hc/ht head
-
-    DEBUG("== ", zstr_(pNameStr), " done  (moveKind=", udec_(dog.getMoveKind()), ") ==")
-    repeat idx from 0 to 3
-        tx, ty, tz := dog.getLegTarget(idx)
-        cx, cy, cz := dog.getLegCurrent(idx)
-        ca, fa, ta := dog.getLegServoAngles(idx)
-        DEBUG("  ", zstr_(legName(idx)), " tgt(", sdec_(tx), ",", sdec_(ty), ",", sdec_(tz), ")  cur(", sdec_(cx), ",", sdec_(cy), ",", sdec_(cz), ")  servo c/f/t=", sdec_(ca), "/", sdec_(fa), "/", sdec_(ta))
-    hc, ht := dog.getHead()
-    DEBUG("  HEAD cur=", sdec_(hc), " tgt=", sdec_(ht), "   battery=", udec_(dog.getBatteryMilliVolts()), " mV")
-
-PRI legName(idx) : pStr
-' Short label for a leg index (0=FL 1=BL 2=FR 3=BR).
-    case idx
-        0: pStr := string("FL")
-        1: pStr := string("BL")
-        2: pStr := string("FR")
-        3: pStr := string("BR")
-        other: pStr := string("??")
+    dog.dumpState(pNameStr)
 
 PRI countdown() | i
     repeat i from COUNTDOWN_S to 1
