@@ -31,7 +31,7 @@ CON ' ---- leg identity (must match isp_leg) ----
   #0, SIDE_LEFT, SIDE_RIGHT
   #0, END_FRONT, END_BACK
   JOINTS_PER_LEG  = 3
-  HEAD_TRIM_DEG   = -5             ' head-pan center trim (PCA9685 ch 15)
+  HEAD_TRIM_DEG   = 12             ' head-pan center trim (PCA9685 ch 15) -- re-cal 2026-06-03
 
 CON ' ---- static stance leveling (body geometry + measured neutral tilt) ----
   {Spin2_Doc_CON}
@@ -45,12 +45,13 @@ CON ' ---- static stance leveling (body geometry + measured neutral tilt) ----
   ' Backend leg index order for stanceTrimY(): 0=FL 1=BL 2=FR 3=BR (matches isp_robot_dog cur[]).
   #0, STANCE_FL, STANCE_BL, STANCE_FR, STANCE_BR
 
-DAT ' ---- per-joint servo trims, degrees (METERED 2026-06-01) ----
+DAT ' ---- per-joint servo trims, degrees (full re-METER 2026-06-03 via test_cal_full CALDUMP) ----
   ' index = (side*2 + ending) * 3, then [coxa, femur, tibia] = [shoulder, thigh, knee]
-  legTrim   long  -23, -22,  -4    ' [0] LEFT  FRONT (FL) ch 4/3/2
-            long   -2,   0,  -5    ' [1] LEFT  BACK  (BL) ch 7/6/5
-            long  -11, -19, -16    ' [2] RIGHT FRONT (FR) ch 11/12/13
-            long   -5,   0, -10    ' [3] RIGHT BACK  (BR) ch 8/9/10
+  ' All four legs (shoulder/thigh/knee) + head re-metered 2026-06-03; supersedes the 2026-06-01 set.
+  legTrim   long  -25, -24,  -6    ' [0] LEFT  FRONT (FL) ch 4/3/2
+            long   -4,  -6,  -9    ' [1] LEFT  BACK  (BL) ch 7/6/5
+            long  -10, -19, -14    ' [2] RIGHT FRONT (FR) ch 11/12/13
+            long   -6,   0, -11    ' [3] RIGHT BACK  (BR) ch 8/9/10
 
 DAT ' ---- static stance trim: body tilt measured at the neutral stand (degrees) ----
   ' MEASURE on the bench with src/test_dog_level.spin2 (posts CMD_STAND, averages getAttitude()), then

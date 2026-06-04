@@ -83,7 +83,8 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
   HALF_CIRCLE_DEG     = 180
 
 CON ' ---- runtime ----
-  TASK_STACK_LONGS      = 64        ' per-task cooperative stack
+  TASK_STACK_LONGS      = 192       ' per-task cooperative stack (64 overflowed on the CORDIC IK chain;
+                                    '   seedStand on the 256-long cog stack held -> right-size via reportStackUse)
   BATTERY_READ_PASSES   = 50        ' senseTask passes between battery reads
   LOW_BATT_CONSECUTIVE  = 3         ' consecutive LOW battery readings before forcing rest (ignore inrush sags)
   PIN_OE_UNUSED         = -1        ' PCA9685 /OE not driven by the P2 (tied on the board)
@@ -109,6 +110,7 @@ OBJ
   battery : "isp_battery_monitor"
   cal     : "isp_calibration"                                ' per-joint servo trims (this robot)
   term    : "isp_serial_singleton"                           ' debug terminal output
+  stack   : "isp_stack_check"                                ' COG/task stack-overflow detector
 
 DAT ' ---- command mailbox (frontend cog writes, backend cog reads) ----
 
@@ -127,6 +129,11 @@ DAT ' ---- telemetry (backend cog writes, anyone reads) ----
   battMilliVolts  LONG  0
   modeState       LONG  MODE_IDLE
   busyFlag        LONG  FALSE
+  moveComplete    LONG  TRUE                                  ' FALSE while an eased move runs; TRUE when it finishes
+  moveKind        LONG  CMD_NONE                              ' which CMD_* started the current/last eased move (enum)
+  legCoxaDeg      LONG  0[NUM_LEGS]                           ' last servo angle per leg (deg), published by writeLegs
+  legFemurDeg     LONG  0[NUM_LEGS]                           '   -- read as plain DAT by getLegServoAngles (cross-cog safe)
+  legTibiaDeg     LONG  0[NUM_LEGS]
 
 DAT ' ---- internal control state (backend cog only) ----
 
@@ -142,7 +149,11 @@ DAT ' ---- internal control state (backend cog only) ----
   bShowDebug       BYTE  FALSE
   lowBattReadings  LONG  0                                    ' consecutive low battery readings
   motionStack      LONG  0[TASK_STACK_LONGS]
+  motionStackMark  LONG  stack.DO_NOT_WRITE_MARK             ' sentinel: motionTask overflow detector
   senseStack       LONG  0[TASK_STACK_LONGS]
+  senseStackMark   LONG  stack.DO_NOT_WRITE_MARK             ' sentinel: senseTask overflow detector
+  pBackendStack    LONG  0                                   ' backend-cog launch stack (set by setStackCheck)
+  backendStackLongs LONG 0
 
 DAT ' ---- motion engine state (backend cog only): foot targets in mm, leg order FL/BL/FR/BR ----
 
@@ -200,9 +211,21 @@ PUB start(pinSCL, pinSDA)
     tgtHeadDeg := curHeadDeg
     seedStand()                                              ' snap to the neutral stance ONCE at power-on (no pose to blend from)
 
+    stack.prepStackForCheck(@motionStack, TASK_STACK_LONGS)  ' arm task-stack overflow detectors
+    stack.prepStackForCheck(@senseStack, TASK_STACK_LONGS)
     taskspin(NEWTASK, motionTask(), @motionStack)            ' cooperative siblings in this cog
     taskspin(NEWTASK, senseTask(), @senseStack)
     dispatchLoop()                                           ' becomes the dispatch task (no return)
+
+PUB setStackCheck(pStack, nStackLongs)
+'' (launcher) Register THIS backend cog's launch stack so dispatchLoop watches it for overflow.
+'' Call AFTER cogspin (the launcher prepped the sentinel before launch).
+''
+'' @param pStack - pointer to the backend cog's stack buffer
+'' @param nStackLongs - stack length in longs
+
+    pBackendStack := pStack
+    backendStackLongs := nStackLongs
 
 PUB postCommand(commandId, arg0, arg1, arg2, arg3)
 '' (frontend cog) Publish a command to the backend mailbox. Latest-wins, single slot.
@@ -250,6 +273,60 @@ PUB isBusy() : bActive
 
     bActive := busyFlag
 
+PUB getMoveComplete() : bComplete
+'' TRUE once the active eased move has reached its target; FALSE while one is running. Cleared when
+'' a move is armed, set when it finishes -- watch the FALSE->TRUE edge for "move done".
+''
+'' @returns bComplete - TRUE if no eased move is in progress
+
+    bComplete := moveComplete
+
+PUB getMoveKind() : kind
+'' The CMD_* enum that started the current/last eased move (CMD_NONE at power-on).
+''
+'' @returns kind - a CMD_* value
+
+    kind := moveKind
+
+PUB getLegTarget(legIdx) : x, y, z
+'' Foot target the active move is easing toward, mm (leg order 0=FL 1=BL 2=FR 3=BR).
+''
+'' @param legIdx - leg index 0..3
+'' @returns x, y, z - target foot position, mm
+
+    x := tgtX[legIdx]
+    y := tgtY[legIdx]
+    z := tgtZ[legIdx]
+
+PUB getLegCurrent(legIdx) : x, y, z
+'' Foot position the leg is at right now, mm (leg order 0=FL 1=BL 2=FR 3=BR).
+''
+'' @param legIdx - leg index 0..3
+'' @returns x, y, z - current foot position, mm
+
+    x := curX[legIdx]
+    y := curY[legIdx]
+    z := curZ[legIdx]
+
+PUB getLegServoAngles(legIdx) : coxaDeg, femurDeg, tibiaDeg
+'' Last servo angles written for a leg (deg, post mirror/trim/clamp); leg order 0=FL 1=BL 2=FR 3=BR.
+''
+'' @param legIdx - leg index 0..3
+'' @returns coxaDeg, femurDeg, tibiaDeg - last commanded shoulder/thigh/knee angles
+
+    coxaDeg  := legCoxaDeg[legIdx]                            ' plain DAT read (no cross-cog sub-object call)
+    femurDeg := legFemurDeg[legIdx]
+    tibiaDeg := legTibiaDeg[legIdx]
+
+PUB getHead() : curDeg, tgtDeg
+'' Head pan current + target angle, degrees.
+''
+'' @returns curDeg - head angle now
+'' @returns tgtDeg - head angle target
+
+    curDeg := curHeadDeg
+    tgtDeg := tgtHeadDeg
+
 PUB enableDebug(bEnable)
 '' Turn on/off this object's debug messaging.
 ''
@@ -257,10 +334,22 @@ PUB enableDebug(bEnable)
 
     bShowDebug := bEnable
 
-PRI dispatchLoop()
+PRI dispatchLoop() | reportCt
 ' Backend main task: consume commands, enforce the safety floor, yield. Never returns.
+'
+' @local reportCt - one-shot counter to print stack high-water once the IK has run
 
+    reportCt := 0
     repeat
+        if pBackendStack
+            stack.checkStack(pBackendStack, backendStackLongs)   ' halts this cog on overflow
+        if reportCt >= 0                                         ' one-shot stack high-water report
+            if ++reportCt == 250                                 ' after the IK has run for a while
+                stack.reportStackUse(@motionStack, TASK_STACK_LONGS)
+                stack.reportStackUse(@senseStack, TASK_STACK_LONGS)
+                if pBackendStack
+                    stack.reportStackUse(pBackendStack, backendStackLongs)
+                reportCt := -1                                   ' stop reporting
         if cmdSeq <> ackSeq
             consumeCommand()
         applySafetyFloor()
@@ -274,6 +363,7 @@ PRI motionTask()
 
     nextFrameCt := getct()
     repeat
+        stack.checkStack(@motionStack, TASK_STACK_LONGS)     ' deep CORDIC IK runs here -- watch for overflow
         if (getct() - nextFrameCt) >= 0                      ' wrap-safe: frame deadline reached?
             nextFrameCt += frameTicks
             advanceFrame()
@@ -300,6 +390,7 @@ PRI senseTask() | passCount, pitchDeg, rollDeg
 
     passCount := 0
     repeat
+        stack.checkStack(@senseStack, TASK_STACK_LONGS)      ' watch senseTask stack
         pitchDeg, rollDeg := imu.tiltDegrees()
         attPitch := pitchDeg
         attRoll := rollDeg
@@ -321,6 +412,7 @@ PRI consumeCommand() | requestedCmd
 
     requestedCmd := cmdId
     ackSeq := cmdSeq                                          ' acknowledge (frontend sees accepted)
+    moveKind := requestedCmd                                  ' publish which move this is (enum, for telemetry)
     case requestedCmd
         CMD_STOP, CMD_STAND:
             activeMode := MODE_IDLE
@@ -529,9 +621,11 @@ PRI standPose()
     beginPoseMove(POSE_FRAMES)
 
 PRI relaxPose()
-' Ease all four feet to the tucked resting pose.
+' Ease all four feet to the tucked resting pose. Keep the SAME lateral stance as stand/sit
+' (Z = +/-STANCE_LATERAL_MM); only X (fore/aft tuck) and Y (height) change. Zeroing Z here would
+' swing every coxa toward center (a = 90 - atan2(z,y)) -- an unwanted shoulder rotation on relax.
 
-    setLegTargets(RELAX_X_MM, RELAX_HEIGHT_MM, 0, 0)
+    setLegTargets(RELAX_X_MM, RELAX_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)
     beginPoseMove(POSE_FRAMES)
 
 PRI sitPose()
@@ -588,6 +682,7 @@ PRI armMove(frames)
     startHeadDeg := curHeadDeg
     moveFrames := 1 #> frames
     moveFrame := 0
+    moveComplete := FALSE                                     ' a timed move is now running (top watches FALSE->TRUE)
 
 PRI stepPose() | e, idx
 ' Advance one frame of an eased point-to-point move (poses / head pan). All joints share one
@@ -608,6 +703,8 @@ PRI stepPose() | e, idx
             curHeadDeg := lerpFix(startHeadDeg, tgtHeadDeg, e)
             head.panTo(curHeadDeg)
         commitCur()
+        if moveFrame == moveFrames
+            moveComplete := TRUE                              ' eased move just reached its target (one-shot edge)
 
 PRI commitCur() | idx
 ' Guard every foot for reachability, then drive all four legs to their current foot positions.
@@ -619,13 +716,32 @@ PRI commitCur() | idx
         guardReach(idx)
     writeLegs()
 
-PRI writeLegs()
-' Drive the four legs to their current foot positions (FL/BL/FR/BR -> 12 servo writes).
+PRI writeLegs() | c, f, t
+' Drive the four legs to their current foot positions (FL/BL/FR/BR -> 12 servo writes), and publish
+' each leg's resulting servo angles into the telemetry DAT (read same-cog here -> cross-cog safe).
+'
+' @local c, f, t - coxa/femur/tibia servo angles just written for the current leg
 
     flLeg.moveToXYZ(curX[0], curY[0], curZ[0])
+    c, f, t := flLeg.getServoAngles()
+    legCoxaDeg[0] := c
+    legFemurDeg[0] := f
+    legTibiaDeg[0] := t
     blLeg.moveToXYZ(curX[1], curY[1], curZ[1])
+    c, f, t := blLeg.getServoAngles()
+    legCoxaDeg[1] := c
+    legFemurDeg[1] := f
+    legTibiaDeg[1] := t
     frLeg.moveToXYZ(curX[2], curY[2], curZ[2])
+    c, f, t := frLeg.getServoAngles()
+    legCoxaDeg[2] := c
+    legFemurDeg[2] := f
+    legTibiaDeg[2] := t
     brLeg.moveToXYZ(curX[3], curY[3], curZ[3])
+    c, f, t := brLeg.getServoAngles()
+    legCoxaDeg[3] := c
+    legFemurDeg[3] := f
+    legTibiaDeg[3] := t
 
 PRI guardReach(idx) | x, y, z, r, rGuarded
 ' checkPoint guard (ported from Freenove Control.checkPoint): clamp foot[idx] to the reachable

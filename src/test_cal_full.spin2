@@ -72,6 +72,7 @@ VAR
   long  jntIdx
   long  stepDeg
   long  keyCode
+  long  prevKey                                             ' last polled key, for press-edge debounce
   long  trims[NUM_LEGS * SLOTS_PER_LEG]
 
 DAT ' ---- channel map (verified 2026-06-01): leg*3 + joint; -1 = no joint ----
@@ -93,20 +94,26 @@ PUB main()
     setupWindow()
     showStep()
     showNameAndValue()
+    prevKey := 0
     repeat
         keyCode := 0
         DEBUG(`cal `pc_key(@keyCode))                        ' poll host keyboard (LAST in stmt)
-        if keyCode <> 0
-            case keyCode
-                "a", "A": adjust(-stepDeg)
-                "d", "D": adjust(stepDeg)
-                "1":      setStep(STEP_FINE)
-                "5":      setStep(STEP_COARSE)
-                "j", "J": nextJoint()
-                "l", "L": nextLeg()
-                "c", "C": centerAll()
-                "s", "S": dumpOne()
-                "p", "P": dumpAll()
+        ' Debounce: act only on the press EDGE (key changed since last poll). A held key reports the
+        ' same code every ~25 ms poll; requiring release (key -> 0) before re-firing makes one
+        ' physical press = one action, instead of 2-3 repeats.
+        if keyCode <> prevKey
+            prevKey := keyCode
+            if keyCode <> 0
+                case keyCode
+                    "a", "A": adjust(-stepDeg)
+                    "d", "D": adjust(stepDeg)
+                    "1":      setStep(STEP_FINE)
+                    "5":      setStep(STEP_COARSE)
+                    "j", "J": nextJoint()
+                    "l", "L": nextLeg()
+                    "c", "C": centerAll()
+                    "s", "S": dumpOne()
+                    "p", "P": dumpAll()
         waitms(25)
 
 PRI curIndex() : idx
@@ -137,8 +144,10 @@ PRI nextJoint()
     showNameAndValue()
 
 PRI nextLeg()
+' Advance to the next leg but KEEP the selected joint, so you can trim e.g. the shoulder across
+' FL -> BL -> BR -> FR without re-selecting it. Clamp for HEAD (1 joint) so the index stays valid.
     legIdx := (legIdx + 1) // NUM_LEGS
-    jntIdx := 0
+    jntIdx := jntIdx // jointCount()
     showNameAndValue()
 
 PRI driveCur() | ch

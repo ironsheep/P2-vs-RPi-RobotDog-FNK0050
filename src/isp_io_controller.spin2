@@ -55,6 +55,7 @@ OBJ
   buzzer : "isp_buzzer"                                      ' buzzer (P10)
   sonic  : "isp_hcsr04"                                      ' ultrasonic (ECHO P9 / TRIG P11), smart-pin mode
   term   : "isp_serial_singleton"                            ' debug terminal output
+  stack  : "isp_stack_check"                                 ' COG stack-overflow detector
 
 DAT ' ---- command mailbox B (comms cog writes, IO cog reads) ----
 
@@ -84,6 +85,8 @@ DAT ' ---- internal service state (IO cog only) ----
   nextPingTick       LONG  0
   echoDeadline       LONG  0
   bShowDebug         BYTE  FALSE
+  pIoStack           LONG  0                                  ' IO-cog launch stack (set by setStackCheck)
+  ioStackLongs       LONG  0
 
 PUB null()
 '' This is not a top-level object.
@@ -154,10 +157,22 @@ PUB enableDebug(bEnable)
 
     bShowDebug := bEnable
 
+PUB setStackCheck(pStack, nStackLongs)
+'' (launcher) Register THIS IO cog's launch stack so serviceLoop watches it for overflow.
+'' Call AFTER cogspin (the launcher prepped the sentinel before launch).
+''
+'' @param pStack - pointer to the IO cog's stack buffer
+'' @param nStackLongs - stack length in longs
+
+    pIoStack := pStack
+    ioStackLongs := nStackLongs
+
 PRI serviceLoop()
 ' The IO cog's main loop: consume commands and step each peripheral, all non-blocking.
 
     repeat
+        if pIoStack
+            stack.checkStack(pIoStack, ioStackLongs)          ' halts this cog on overflow
         if bCmdSeq <> bAckSeq
             consumeCommand()
         stepLed()

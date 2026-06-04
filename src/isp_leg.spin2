@@ -80,6 +80,9 @@ VAR ' ---- PER-INSTANCE leg state (each isp_leg object is independent -- MUST be
   long  calOffsetCoxa                                        ' per-joint trim offsets (degrees)
   long  calOffsetFemur
   long  calOffsetTibia
+  long  lastCoxaServo                                        ' last servo angle written (deg, post mirror/trim/clamp)
+  long  lastFemurServo                                       '   -- published for telemetry (getServoAngles)
+  long  lastTibiaServo
 
 DAT ' ---- shared servo name labels (read-only; safe to share) ----
 
@@ -144,9 +147,25 @@ PUB setJointAngles(coxaDeg, femurDeg, tibiaDeg) | servoCoxa, servoFemur, servoTi
     servoFemur += calOffsetFemur
     servoTibia += calOffsetTibia
 
-    coxaServo.writePosition(coxaServo.M_ANGLE,  SERVO_MIN_DEG #> servoCoxa  <# SERVO_MAX_DEG)
-    femurServo.writePosition(femurServo.M_ANGLE, SERVO_MIN_DEG #> servoFemur <# SERVO_MAX_DEG)
-    tibiaServo.writePosition(tibiaServo.M_ANGLE, SERVO_MIN_DEG #> servoTibia <# SERVO_MAX_DEG)
+    servoCoxa  := SERVO_MIN_DEG #> servoCoxa  <# SERVO_MAX_DEG  ' clamp, then record + drive (one source of truth)
+    servoFemur := SERVO_MIN_DEG #> servoFemur <# SERVO_MAX_DEG
+    servoTibia := SERVO_MIN_DEG #> servoTibia <# SERVO_MAX_DEG
+    lastCoxaServo  := servoCoxa                                ' publish for telemetry (getServoAngles)
+    lastFemurServo := servoFemur
+    lastTibiaServo := servoTibia
+    coxaServo.writePosition(coxaServo.M_ANGLE,  servoCoxa)
+    femurServo.writePosition(femurServo.M_ANGLE, servoFemur)
+    tibiaServo.writePosition(tibiaServo.M_ANGLE, servoTibia)
+
+PUB getServoAngles() : coxaDeg, femurDeg, tibiaDeg
+'' Return the servo angles last written for this leg (degrees, after mirror + trim + clamp). Reads
+'' per-instance hub state only -- safe to call from another cog for telemetry/diagnostics.
+''
+'' @returns coxaDeg/femurDeg/tibiaDeg - last commanded shoulder/thigh/knee servo angles
+
+    coxaDeg  := lastCoxaServo
+    femurDeg := lastFemurServo
+    tibiaDeg := lastTibiaServo
 
 PUB moveToXYZ(footX, footY, footZ) | thetaZY, aUnits, x4, x5, l23, adjB, bAsinUnits, numV, denV, oppV, acosVUnits, bUnits, numC, denC, oppC, acosCUnits, cUnits
 '' Place the foot at (x, y, z) mm via inverse kinematics, then drive the joints.
