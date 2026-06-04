@@ -34,7 +34,8 @@ CON
   COUNTDOWN_S   = 8
   COG_STACK     = 256
   INIT_MS       = 5000               ' allow cog1 init + gyro cal + initial STAND
-  SETTLE_MS     = 6000               ' time to set the robot down on a level surface, then settle
+  CYCLES        = 3                  ' crouch->stand->measure repetitions (test approach-from-crouch repeatability)
+  SETTLE_MS     = 400                ' brief PHYSICAL settle (servos/IMU) AFTER the move-complete edge, before measuring
   AVG_SAMPLES   = 32                 ' attitude samples to average
   SAMPLE_MS     = 50                 ' spacing between attitude samples
   COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
@@ -51,8 +52,9 @@ DAT ' ---- cog launch stacks, each followed IMMEDIATELY by its overflow sentinel
   ioStack          LONG  0[COG_STACK]
   ioStackMark      LONG  stack.DO_NOT_WRITE_MARK
 
-PUB main() | backendCog, ioCog
-'' Launch the production 3-cog shape, then measure body tilt at the calibrated neutral stand.
+PUB main() | backendCog, ioCog, cycle
+'' Launch the production 3-cog shape, then measure body tilt at the calibrated neutral stand --
+'' always approaching STAND by rising from a CROUCH so servo backlash is repeatable.
 
     waitms(100)
     DEBUG("=== IMU STATIC-LEVELING scenario (production 3-cog shape) ===")
@@ -78,14 +80,37 @@ PUB main() | backendCog, ioCog
 
     reportStoredTrim()
 
-    DEBUG("-- CMD_STAND (calibrated neutral); SET DOWN LEVEL now, then settle + MEASURE --")
-    dog.postCommand(dog.CMD_STAND, 0, 0, 0, 0)
-    waitms(SETTLE_MS)
-    dog.dumpState(string("STAND (neutral, at measure)"))
-    measureTilt()
+    DEBUG("-- repeatable leveling: CROUCH -> STAND -> measure, x", udec_(CYCLES), " (always rise from crouch) --")
+    DEBUG(">> set the dog FREE-STANDING on a FLAT, LEVEL surface; HANDS OFF during each measure <<")
+    repeat cycle from 1 to CYCLES
+        postAndSettle(dog.CMD_CROUCH, 0)                     ' down to the consistent approach pose
+        postAndSettle(dog.CMD_STAND, SETTLE_MS)              ' rise to neutral (backlash taken up one way), then settle
+        DEBUG("-- cycle ", udec_(cycle), " of ", udec_(CYCLES), " --")
+        dog.dumpState(string("STAND from crouch"))
+        measureTilt()
 
+    postAndSettle(dog.CMD_CROUCH, 0)                         ' leave it crouched (rest)
     DEBUG("LEVEL_DONE")
     repeat
+
+PRI postAndSettle(cmd, settleMs) | guard
+' Post a pose command and wait for the driver's move-complete FALSE->TRUE edge -- exactly as long as
+' the eased move takes, no blind wall-clock guess -- then an optional brief PHYSICAL settle before a
+' measurement (servos/IMU lag the commanded interpolation slightly).
+'
+' @param cmd - CMD_* pose to post
+' @param settleMs - extra physical-settle wait after move-complete (0 = none)
+' @local guard - bounded-wait counter so a no-op move can never hang
+
+    dog.postCommand(cmd, 0, 0, 0, 0)
+    guard := 0
+    repeat while dog.getMoveComplete() and (guard++ < 400)   ' wait for the move to START (clears the flag)
+        waitms(5)
+    guard := 0
+    repeat until dog.getMoveComplete() or (guard++ > 800)    ' wait for the move to FINISH (sets the flag)
+        waitms(5)
+    if settleMs > 0
+        waitms(settleMs)                                     ' brief physical settle before measuring
 
 PRI reportStoredTrim() | pitchDeg, rollDeg
 ' Echo the stance trim currently compiled into isp_calibration so the run is self-documenting.

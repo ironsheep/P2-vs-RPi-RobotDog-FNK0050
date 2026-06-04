@@ -45,8 +45,9 @@ CON ' ---- commands (frontend -> backend mailbox) ----
   '  CMD_TURN_RIGHT - turn right in place (latched); arg0 = speed
   '  CMD_STEP_LEFT  - sidestep left (latched); arg0 = speed
   '  CMD_STEP_RIGHT - sidestep right (latched); arg0 = speed
+  '  CMD_CROUCH     - ease to a low symmetric crouch (feet under body, X=0) -- consistent approach pose
   #0, CMD_NONE, CMD_STOP, CMD_FORWARD, CMD_RELAX, CMD_STAND, CMD_SIT, CMD_HELLO, CMD_HEAD
-  #8, CMD_BACKWARD, CMD_TURN_LEFT, CMD_TURN_RIGHT, CMD_STEP_LEFT, CMD_STEP_RIGHT
+  #8, CMD_BACKWARD, CMD_TURN_LEFT, CMD_TURN_RIGHT, CMD_STEP_LEFT, CMD_STEP_RIGHT, CMD_CROUCH
 
 CON ' ---- mode states (telemetry) ----
   {Spin2_Doc_CON}
@@ -64,6 +65,7 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
   RELAX_X_MM          = 55          ' tucked rest pose (Freenove relax point)
   RELAX_HEIGHT_MM     = 78
   SIT_FRONT_HEIGHT_MM = 60          ' front legs shortened to sit back
+  CROUCH_HEIGHT_MM    = 55          ' deep symmetric crouch (feet under body); STAND/power-on rise from here
   GAIT_X_AMPL_MM      = 12          ' fore/aft stride amplitude (forward/backward)
   GAIT_LIFT_MM        = 6           ' foot-lift amplitude during swing (forward/backward)
   TURN_XZ_AMPL_MM     = 3           ' turn fore/aft + lateral amplitude (X and Z coupled; Freenove turn)
@@ -87,6 +89,8 @@ CON ' ---- runtime ----
                                     '   seedStand on the 256-long cog stack held -> right-size via reportStackUse)
   BATTERY_READ_PASSES   = 50        ' senseTask passes between battery reads
   LOW_BATT_CONSECUTIVE  = 3         ' consecutive LOW battery readings before forcing rest (ignore inrush sags)
+  BATTERY_WARN_MV       = 6800      ' log a LOW-BATTERY warning at/below this (near the 6400 cutoff); results get unreliable
+  BATTERY_WARN_SECS     = 5         ' minimum seconds between low-battery log warnings (throttle)
   PIN_OE_UNUSED         = -1        ' PCA9685 /OE not driven by the P2 (tied on the board)
 
 CON ' ---- smooth-motion engine (fixed-rate, eased, blendable) ----
@@ -95,6 +99,7 @@ CON ' ---- smooth-motion engine (fixed-rate, eased, blendable) ----
   EASE_ONE        = 4096            ' fixed-point 1.0 for the ease/lerp math (12-bit)
   POSE_FRAMES     = 30              ' eased duration of a pose transition (~0.6 s @ 50 Hz)
   HEAD_FRAMES     = 20              ' eased duration of a head pan (~0.4 s)
+  POWERON_FRAMES  = 75              ' gentle power-on GLIDE crouch->stand (~1.5 s) -- rise, don't snap to attention
   REACH_MIN_MM    = 25             ' checkPoint reachability guard (Freenove leg-length floor)
   REACH_MAX_MM    = 130            ' checkPoint reachability guard (Freenove leg-length ceiling)
 
@@ -148,6 +153,8 @@ DAT ' ---- internal control state (backend cog only) ----
   bLowBattLatched  BYTE  FALSE
   bShowDebug       BYTE  FALSE
   lowBattReadings  LONG  0                                    ' consecutive low battery readings
+  nextBattWarnCt   LONG  0                                    ' CT deadline for the next low-battery log warning
+  battWarnTicks    LONG  0                                    ' clkfreq * BATTERY_WARN_SECS (warning throttle)
   motionStack      LONG  0[TASK_STACK_LONGS]
   motionStackMark  LONG  stack.DO_NOT_WRITE_MARK             ' sentinel: motionTask overflow detector
   senseStack       LONG  0[TASK_STACK_LONGS]
@@ -207,6 +214,8 @@ PUB start(pinSCL, pinSDA)
     busyFlag := FALSE
     bLowBattLatched := FALSE
     frameTicks := clkfreq / FRAME_HZ                         ' motion-engine timebase (CT ticks per frame)
+    battWarnTicks := clkfreq * BATTERY_WARN_SECS             ' low-battery warning throttle
+    nextBattWarnCt := getct()
     curHeadDeg := head.HEAD_CENTER_DEG + cal.headTrim()      ' head starts centered + trim
     tgtHeadDeg := curHeadDeg
     seedStand()                                              ' snap to the neutral stance ONCE at power-on (no pose to blend from)
@@ -434,6 +443,9 @@ PRI senseTask() | passCount, pitchDeg, rollDeg
                 lowBattReadings++
             else
                 lowBattReadings := 0                          ' reset on any healthy read (ignores inrush)
+            if battMilliVolts < BATTERY_WARN_MV and ((getct() - nextBattWarnCt) >= 0)
+                nextBattWarnCt := getct() + battWarnTicks     ' throttle warnings to BATTERY_WARN_SECS apart
+                DEBUG("!! BATTERY LOW ", udec_(battMilliVolts), " mV (cutoff ", udec_(battery.LOW_BATTERY_CUTOFF_MV), " mV) -- charge soon; results unreliable")
         tasknext()
 
 PRI consumeCommand() | requestedCmd
@@ -470,6 +482,10 @@ PRI consumeCommand() | requestedCmd
             activeMode := MODE_IDLE
             modeState := MODE_IDLE
             sitPose()
+        CMD_CROUCH:
+            activeMode := MODE_IDLE
+            modeState := MODE_IDLE
+            crouchPose()
         CMD_HEAD:
             headPanTo(cmdArg0)
         CMD_HELLO:
@@ -669,6 +685,14 @@ PRI sitPose()
     setLegTarget(3, 0, SIT_FRONT_HEIGHT_MM,-STANCE_LATERAL_MM)    ' BR lowered
     beginPoseMove(POSE_FRAMES)
 
+PRI crouchPose()
+' Ease all four feet to a low symmetric crouch (X=0, low Y, feet under the body). Used as the
+' consistent approach pose for repeatable leveling: always reach STAND by RISING from CROUCH so
+' servo backlash is taken up in one direction.
+
+    setLegTargets(0, CROUCH_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)
+    beginPoseMove(POSE_FRAMES)
+
 PRI headPanTo(panDeg)
 ' Pan the head to panDeg. Eases while idle/posed; if a gait or gesture owns the frame loop the
 ' head moves immediately (the eased frame path is busy driving the legs).
@@ -684,16 +708,19 @@ PRI headPanTo(panDeg)
         armMove(HEAD_FRAMES)
 
 PRI seedStand()
-' Power-on only: place the feet at the neutral stance IMMEDIATELY (no prior pose to blend from).
+' Power-on: snap ONCE to a deep crouch (the unavoidable first write -- to a LOW, low-stress pose, not
+' full attention), then arm an eased GLIDE up to the level stand so the dog RISES gently instead of
+' snapping to attention (lower peak current, and you can watch it). motionTask (launched right after)
+' runs the glide frames.
 
-    setLevelStandTargets()
-    longmove(@curX, @tgtX, NUM_LEGS)
+    setLegTargets(0, CROUCH_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)   ' crouch foot targets
+    longmove(@curX, @tgtX, NUM_LEGS)                         ' cur := crouch (the one unavoidable power-on snap)
     longmove(@curY, @tgtY, NUM_LEGS)
     longmove(@curZ, @tgtZ, NUM_LEGS)
-    moveFrames := 0
-    moveFrame := 0
-    commitCur()
+    commitCur()                                              ' write the crouch once
     head.panTo(curHeadDeg)
+    setLevelStandTargets()                                   ' now aim at the level stand...
+    beginPoseMove(POWERON_FRAMES)                            ' ...and glide up to it (eased; motionTask runs it)
 
 PRI beginPoseMove(frames)
 ' Arm an eased leg move toward the current targets; the head holds (target := current).

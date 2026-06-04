@@ -58,8 +58,8 @@ DAT ' ---- static stance trim: body tilt measured at the neutral stand (degrees)
   ' paste the measured pitch/roll here and rebuild; re-run test_dog_level to confirm residual ~= 0.
   ' Sign convention (confirm on bench): +pitch = nose/front HIGH, +roll = LEFT side HIGH.
   ' Both 0 until metered -> stanceTrimY() returns 0 and the stance is unchanged.
-  stancePitchDeg  long  0          ' measured fore/aft tilt at neutral (deg)
-  stanceRollDeg   long  0          ' measured left/right tilt at neutral (deg)
+  stancePitchDeg  long  -3         ' measured fore/aft tilt at neutral (deg) -- 2026-06-03, 3-cycle crouch-approach avg
+  stanceRollDeg   long  2          ' measured left/right tilt at neutral (deg) -- 2026-06-03 (~+1.6, repeatable)
 
 PUB null()
 '' This is not a top-level object.
