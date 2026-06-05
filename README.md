@@ -73,6 +73,25 @@ Start here when planning or executing the hardware swap:
 Early-stage. Documentation and mechanical/electrical planning are in place; the P2
 firmware in `src/` is under development.
 
+## Possible future directions
+
+These are **candidate** directions for after the current port is fully bench-certified —
+**none is committed or in progress**, and the current firmware does not depend on any of
+them. They are recorded here so the intent is visible; the most likely next one is
+**speech recognition**.
+
+- **Speech recognition** *(most likely up next)* — let the dog take spoken commands
+  ("sit", "forward", "hello") instead of only scripted/mailbox commands. Would plug into
+  the existing cog-0 command path (post into mailbox A/B), so the motion engine and gait
+  catalog need no change.
+- **Vision recognition** — add a camera and on-/off-board inference so the dog can react
+  to what it sees (follow a target, detect obstacles, recognize markers). The biggest open
+  question is where the inference runs, given the P2's resources versus the Pi's old stack.
+- **Bluetooth radio for remote commanding** — a wireless command link to replace the
+  scripted demo orchestrator, driving the same mailbox command set from a phone or
+  gamepad. This is the natural first realization of the still-**TODO** "real comms cog 0"
+  command link the firmware already reserves a seat for.
+
 ---
 
 ## License
