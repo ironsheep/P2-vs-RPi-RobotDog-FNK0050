@@ -10,7 +10,7 @@ Goal: drop a **Propeller 2 Edge Module + experiment/breakout board** in where th
 Raspberry Pi sits, via an adapter that mates to the connection board's 40-pin header.
 
 **Hardware on this build: PCB v1.0** (so the WS2812 LED data line is on **GPIO18**, the
-`rpi_ws281x` path — see [`RPI_GPIO_USAGE.md`](RPI_GPIO_USAGE.md)).
+`rpi_ws281x` path — see [`RPI_GPIO_USAGE.md`](../RPI_GPIO_USAGE.md)).
 
 > ⚠️ **Confidence levels.** *Signal* assignments are **code-derived** (certain — traced in
 > the server source). Power *direction* is **confirmed by Freenove's docs** (§1).
@@ -31,7 +31,7 @@ Raspberry Pi sits, via an adapter that mates to the connection board's 40-pin he
   - Assembly + power switches: https://docs.freenove.com/projects/fnk0050/en/latest/fnk0050/codes/tutorial/2_Assemble_Robot.html
 - **Battery info** (also in repo: `About_Battery.pdf`): the kit uses **2× 18650 Li-ion** cells.
   Battery list / purchase: https://github.com/Freenove/Freenove_Battery_List
-- Companion docs in this repo: [`RPI_GPIO_USAGE.md`](RPI_GPIO_USAGE.md), [`CLAUDE.md`](CLAUDE.md).
+- Companion docs in this repo: [`RPI_GPIO_USAGE.md`](../RPI_GPIO_USAGE.md), [`CLAUDE.md`](../../CLAUDE.md).
 
 ---
 
@@ -300,7 +300,7 @@ diagonal (the upcoming calibration step). Harnesses: `src/test_servo_center.spin
 
 ## License
 
-MIT License - See [LICENSE](../LICENSE) for details.
+MIT License - See [LICENSE](../../LICENSE) for details.
 
 ---
 

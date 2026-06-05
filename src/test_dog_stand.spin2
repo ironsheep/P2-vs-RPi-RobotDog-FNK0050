@@ -20,7 +20,7 @@ CON
   _clkfreq      = 200_000_000
   DEBUG_BAUD    = 2_000_000
 
-  ' as-built pin map (DOCs/P2_MIGRATION_WIRING.md sec.3; verified 2026-05-31)
+  ' as-built pin map (DOCs/P2-platform/P2_MIGRATION_WIRING.md sec.3; verified 2026-05-31)
   PIN_SCL       = 13                  ' I2C clock  (cog1, mailbox A)
   PIN_SDA       = 15                  ' I2C data
   PIN_WS2812    = 8                   ' LED data   (cog2, mailbox B)
@@ -70,8 +70,10 @@ PUB main() | backendCog, ioCog
     dog.setStackCheck(@backendStack, COG_STACK)              ' backend cog now self-watches its stack
     DEBUG("backend cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
     waitms(INIT_MS)
-    dog.dumpState(string("init STAND (power-on seed)"))
+    dog.dumpState(string("init STAND (power-on glide from crouch)"))
 
+    postAndReport(dog.CMD_CROUCH, 0, string("CROUCH (foundational pose -- prove first)"))
+    postAndReport(dog.CMD_STAND,  0, string("STAND (rise from crouch)"))
     postAndReport(dog.CMD_RELAX,  0, string("RELAX"))
     postAndReport(dog.CMD_STAND,  0, string("STAND"))
     postAndReport(dog.CMD_SIT,    0, string("SIT"))

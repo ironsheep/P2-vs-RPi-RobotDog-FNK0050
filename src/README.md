@@ -9,7 +9,7 @@ hardware the Pi's Python stack drove. Language is **Spin2 / PASM2**, compiled wi
 > *static* software map — objects, tiers, files, pins. For how the firmware *runs* at
 > runtime (cogs, cooperative tasks, the frontend↔backend mailbox protocol), see the
 > companion **`../DOCs/P2_FIRMWARE_THEORY_OF_OPS.md`**. For pin/rail facts and their
-> confidence levels, see `../DOCs/P2_MIGRATION_WIRING.md` (the swap) and
+> confidence levels, see `../DOCs/P2-platform/P2_MIGRATION_WIRING.md` (the swap) and
 > `../DOCs/RPI_GPIO_USAGE.md` (the stock Pi usage). Where this README repeats a pin, it is
 > for orientation — the wiring doc wins.
 >
@@ -157,7 +157,7 @@ Whole-robot gestures (push-ups, the "hello" wave — which actually waves a *leg
 
 **As-built adapter map, verified on hardware 2026-05-31** (base P8; offsets LED +0, ECHO +1,
 Buzzer +2, TRIG +3, SCL +5, SDA +7). **Authoritative table + rationale:
-`../DOCs/P2_MIGRATION_WIRING.md` §3.**
+`../DOCs/P2-platform/P2_MIGRATION_WIRING.md` §3.**
 
 | P2 pin | Robo hdr pin | Signal | Driver object | Transport |
 |--------|--------------|--------|---------------|-----------|
@@ -261,9 +261,9 @@ pnut-term-ts -r src/test_i2c_scan.bin -b 2000000 --headless \
 > *download* (fine, ignore it) but does **not** auto-apply the debug baud to the *runtime* read — so
 > 2 Mbaud `DEBUG` comes back as garbage unless you pass `-b 2000000`. Logs land in `logs/`.
 
-These were used for the 2026-06-01 bring-up (results: `../DOCs/P2_MIGRATION_WIRING.md` §7). The
+These were used for the 2026-06-01 bring-up (results: `../DOCs/P2-platform/P2_MIGRATION_WIRING.md` §7). The
 older menu console **`isp_dog_bringup.spin2`** still exists for interactive use against
-[`../DOCs/P2_BRINGUP_PLAYBOOK.md`](../DOCs/P2_BRINGUP_PLAYBOOK.md). The smooth-motion bench tests
+[`../DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md`](../DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md). The smooth-motion bench tests
 **all run the production 3-cog shape** (both service cogs launched, isolation by what cog 0
 commands — never a single-cog shape): **`test_dog_stand.spin2`** (eased poses), **`test_dog_level.spin2`**
 (IMU static-leveling measure), and **`test_dog_gaits.spin2`** (full gait catalog + speed) each keep

@@ -15,7 +15,7 @@ firmware *does* and how a caller drives it.
 > object/tier map lives in [`../../src/README.md`](../../src/README.md); the **runtime** cog/task
 > model and mailbox protocol live in
 > [`../P2_FIRMWARE_THEORY_OF_OPS.md`](../P2_FIRMWARE_THEORY_OF_OPS.md) (ToOps); hardware pin/rail
-> facts live in [`../P2_MIGRATION_WIRING.md`](../P2_MIGRATION_WIRING.md). Where they overlap, those
+> facts live in [`../P2-platform/P2_MIGRATION_WIRING.md`](../P2-platform/P2_MIGRATION_WIRING.md). Where they overlap, those
 > documents win for their domain and this one cites them.
 >
 > **Verification status.** All firmware here **compiles clean** (PNut-ts, full sweep). Behavioral

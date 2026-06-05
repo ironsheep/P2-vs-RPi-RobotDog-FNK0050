@@ -9,7 +9,7 @@ fleet — most exercises target one unit; there is no multi-device sync to speci
 automated or interactive simulator**: exercises are run by hand at the bench through the
 **`isp_dog_bringup` menu console** (flash it, open serial on the programming port at 2 Mbaud
 — the project standard, `P2_DEBUG_BAUD` — press the test's menu digit). Live tests run until a keypress. State each exercise's
-**menu key** in its heading (or Setup). The model playbook is `DOCs/P2_BRINGUP_PLAYBOOK.md`.
+**menu key** in its heading (or Setup). The model playbook is `DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md`.
 
 ## Augments §2 exercise format — every inferred constant gets a metered-vs-read check
 

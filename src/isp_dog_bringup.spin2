@@ -20,7 +20,7 @@
    SAFETY: the servo tests (7-9) move hardware. LIFT/SUPPORT the robot so the legs are free
    before running them, and keep the battery connected (the board regulates from the pack).
 
-   Pin map (as-built, DOCs/P2_MIGRATION_WIRING.md): WS2812=P8, ECHO=P9, buzzer=P10, TRIG=P11,
+   Pin map (as-built, DOCs/P2-platform/P2_MIGRATION_WIRING.md): WS2812=P8, ECHO=P9, buzzer=P10, TRIG=P11,
    SCL=P13, SDA=P15. ECHO is 5 V undivided -> ~1k inline series resistor into P9 (P2 pin clamp).
 }
 

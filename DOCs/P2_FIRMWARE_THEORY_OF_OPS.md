@@ -406,4 +406,4 @@ The §6.1 guide is realized in `src/isp_robot_dog.spin2`. What the engine actual
 ---
 
 *Companion document:* [`../src/README.md`](../src/README.md) — static architecture (objects,
-tiers, files, pins). *Hardware authority:* `P2_MIGRATION_WIRING.md`, `RPI_GPIO_USAGE.md`.
+tiers, files, pins). *Hardware authority:* `P2-platform/P2_MIGRATION_WIRING.md`, `RPI_GPIO_USAGE.md`.

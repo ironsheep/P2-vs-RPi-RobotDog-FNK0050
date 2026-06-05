@@ -25,13 +25,13 @@ dependent, assume v1.0.
 
 - `DOCs/RPI_GPIO_USAGE.md` — the stock Pi pin/bus usage, reverse-engineered from the
   Freenove server source. Device inventory, I²C addresses, servo channel map.
-- `DOCs/P2_MIGRATION_WIRING.md` — the P2 swap: power architecture, header→P2 wiring
+- `DOCs/P2-platform/P2_MIGRATION_WIRING.md` — the P2 swap: power architecture, header→P2 wiring
   map, and 3.3 V-vs-5 V hazards.
 - `DOCs/P2-platform/` — adapter-plate CAD (DXF + 3MF).
 
 > **No schematic exists** for the connection board. Every pin/rail fact in the docs
 > was traced from the Freenove code or confirmed from Freenove's published docs.
-> Items marked "verify"/"inferred" in `P2_MIGRATION_WIRING.md` must be metered before
+> Items marked "verify"/"inferred" in `DOCs/P2-platform/P2_MIGRATION_WIRING.md` must be metered before
 > wiring — do not present them as certain.
 
 ## Hardware facts to keep straight
@@ -58,7 +58,7 @@ Only **three peripherals use discrete GPIO** (each a natural P2 smart-pin job):
 
 All signals route to **P2 pins P8–P15**. **As-built adapter map (verified on hardware
 2026-05-31)**, base P8 with offsets LED +0, ECHO +1, Buzzer +2, TRIG +3, SCL +5, SDA +7.
-Authoritative table + rationale: `DOCs/P2_MIGRATION_WIRING.md` §3.
+Authoritative table + rationale: `DOCs/P2-platform/P2_MIGRATION_WIRING.md` §3.
 
 | P2 pin | Robo hdr pin | Signal |
 |--------|--------------|--------|
@@ -85,7 +85,7 @@ fix in `isp_i2c_pca9685` before any servo would drive.)
   NOT 5 V-tolerant** with no such clamp. **Resolved (metered 2026-05/06-01):** the board does
   **not** divide ECHO — header pin 15 carries **undivided 5 V** — so a **~1 kΩ series R into P9 is
   fitted**, and HC-SR04 ranging is verified working. (Clamp/abs-max in the P2 datasheet; see
-  `DOCs/P2_MIGRATION_WIRING.md` §4, §7.)
+  `DOCs/P2-platform/P2_MIGRATION_WIRING.md` §4, §7.)
 - **3.3 V rail vanishes with the Pi.** Header pins 1/17 were fed *by the Pi*; the P2
   adapter must supply 3.3 V back onto them for the board's I²C pull-ups/chips. #1 gotcha.
 - The robot powers the controller (battery → board regulator → 5 V on header pins 2/4),

@@ -48,7 +48,7 @@ CON ' ---- clock / debug ----
   _clkfreq      = 200_000_000
   DEBUG_BAUD    = 2_000_000
 
-CON ' ---- as-built pin map (DOCs/P2_MIGRATION_WIRING.md sec.3; verified on hardware 2026-05-31) ----
+CON ' ---- as-built pin map (DOCs/P2-platform/P2_MIGRATION_WIRING.md sec.3; verified on hardware 2026-05-31) ----
   PIN_SCL       = 13                  ' I2C clock  (mailbox A bus, cog1)
   PIN_SDA       = 15                  ' I2C data
   PIN_WS2812    = 8                   ' LED data   (mailbox B discrete pins, cog2)

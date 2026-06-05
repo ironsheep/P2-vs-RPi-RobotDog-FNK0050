@@ -1,5 +1,14 @@
 # P2 Bring-Up Playbook
 
+> **🗄️ ARCHIVED 2026-06-05 — bring-up COMPLETE & GREEN.** All subsystems passed on hardware
+> **2026-06-01** (results table below). Moved here from `DOCs/` to keep the active certification
+> doc set minimal. This is the **standing per-subsystem bring-up record**; if the hardware is
+> re-wired or re-seated, restore it to `DOCs/` and re-run the relevant rungs.
+> **Frozen-doc caveats** (not corrected in place): Exercise 3's body still cites the **÷2** divider —
+> the metered value is **÷3** (see the results table); the "FL/BR tibia trim pending" note was since
+> **metered 2026-06-03** (`isp_calibration.spin2`). Its internal relative links were written for the
+> original `DOCs/` location and may not resolve from this archive folder.
+
 A bench checklist for proving each Robot Dog (FNK0050) subsystem **one at a time** on the
 P2, driven by the `src/isp_dog_bringup.spin2` menu console. Run top to bottom — the order is
 dependency-first (bus before the chips that ride it, sensors before actuators).

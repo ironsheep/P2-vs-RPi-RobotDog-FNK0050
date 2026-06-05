@@ -6,8 +6,9 @@ Required slots have no default; optional slots omitted here fall back to documen
 **Project note:** this is **P2 firmware** (Spin2/PASM2, `pnut-ts`), not an app with a unit-test
 suite. There is no automated behavioral test runner — the automated gate is a **compile-all
 sweep** of every `.spin2` object, and real verification is the **hardware bench playbook**
-(`DOCs/P2_BRINGUP_PLAYBOOK.md`). `BUILD_COMMAND` and `TEST_COMMAND` therefore both run the
-compile sweep.
+(`DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`; the per-subsystem bring-up that
+preceded it is archived under `DOCs/plans/archive/`). `BUILD_COMMAND` and `TEST_COMMAND` therefore
+both run the compile sweep.
 
 ---
 
@@ -22,7 +23,7 @@ PROJECT_NAME: P2 Robot Dog
 
 ```yaml
 # Both run a compile-all sweep over every object (the only automated gate).
-# Real hardware verification lives in DOCs/P2_BRINGUP_PLAYBOOK.md.
+# Real hardware verification lives in DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md.
 BUILD_COMMAND: |
   cd "$(git rev-parse --show-toplevel)" || exit 1
   rc=0; for f in src/*.spin2; do pnut-ts -q "$f" || rc=1; done

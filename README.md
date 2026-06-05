@@ -48,17 +48,15 @@ naturally onto a P2 smart pin. See the wiring map for the full breakdown.
 
 Start here when planning or executing the hardware swap:
 
-- **[`DOCs/HARDWARE_SETUP.md`](DOCs/HARDWARE_SETUP.md)** — photo walk-through of the
-  build: modeling/printing the adapter plate, assembling the P2 board onto it, and
-  mounting the assembly on the robot.
+- **[`DOCs/P2-platform/`](DOCs/P2-platform/)** — the **physical-platform hub**: the
+  [build walk-through](DOCs/P2-platform/HARDWARE_SETUP.md) (model/print the adapter plate,
+  assemble the P2 board onto it, mount it on the robot), the
+  [wiring map](DOCs/P2-platform/P2_MIGRATION_WIRING.md) (power architecture, the 3.3 V
+  provenance gotcha, the header→P2 map, and the 3.3 V-vs-5 V hazards — the P2 is **not**
+  5 V tolerant), and the adapter-plate **CAD** (DXF + 3MF).
 - **[`DOCs/RPI_GPIO_USAGE.md`](DOCs/RPI_GPIO_USAGE.md)** — the stock Pi pin/bus
   usage, reverse-engineered from the Freenove server source (no schematic exists).
   Device inventory, I²C addresses, servo channel map, and which signals ride raw GPIO.
-- **[`DOCs/P2_MIGRATION_WIRING.md`](DOCs/P2_MIGRATION_WIRING.md)** — the P2 swap:
-  power architecture, the 3.3 V provenance gotcha, the header→P2 wiring map, and the
-  3.3 V-vs-5 V level-shifting hazards (the P2 is **not** 5 V tolerant).
-- **[`DOCs/P2-platform/`](DOCs/P2-platform/)** — CAD (DXF + 3MF) for the adapter
-  plate that mounts the P2 board in the Pi's footprint.
 
 ## Hardware reference
 

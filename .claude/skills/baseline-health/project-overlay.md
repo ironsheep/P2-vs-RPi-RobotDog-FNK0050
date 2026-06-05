@@ -24,5 +24,5 @@ This is firmware with **no automated behavioral test suite**, so §2-§4 map as 
   diagnosis usually clears the whole cluster.
 
 **Behavioral verification is out of scope for the automated baseline** — it lives in the
-hardware bench playbook (`DOCs/P2_BRINGUP_PLAYBOOK.md`, run on {{TEST_FLEET_DESCRIPTION}}). A
+hardware bench playbook (`DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`, run on {{TEST_FLEET_DESCRIPTION}}). A
 green compile baseline never implies on-hardware correctness; say so in the hand-back.

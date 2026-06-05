@@ -11,7 +11,7 @@ this kit in the repo — every pin below was traced from the code that drives it
 file/line cited. All GPIO numbers are **BCM** (Broadcom) numbering, which is what both
 `gpiozero` and `rpi_ws281x` use by default. Official kit docs: **Freenove FNK0050** —
 https://docs.freenove.com/projects/fnk0050/en/latest/ . For the P2 swap (power, charging,
-wiring map) see [`P2_MIGRATION_WIRING.md`](P2_MIGRATION_WIRING.md).
+wiring map) see [`P2_MIGRATION_WIRING.md`](P2-platform/P2_MIGRATION_WIRING.md).
 
 > **This build uses PCB v1.0.** On the v1.0 connection board the WS2812 LED data line is
 > **GPIO18 (PWM0)** via the `rpi_ws281x` driver — *not* the SPI0/GPIO10 path used by PCB

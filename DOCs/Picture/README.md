@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Images referenced by the project [`README`](../../README.md), the Freenove kit
-[`README`](../README.md), and the [`HARDWARE_SETUP`](../HARDWARE_SETUP.md) build guide.
+[`README`](../README.md), and the [`HARDWARE_SETUP`](../P2-platform/HARDWARE_SETUP.md) build guide.
 
 ### Kit / board reference
 
@@ -16,7 +16,7 @@ Images referenced by the project [`README`](../../README.md), the Freenove kit
 | `PCB_V1.0.png` | Photo of the **v1.0** connection board (this build's PCB — WS2812 data on GPIO18). |
 | `PCB_V2.0.png` | Photo of the **v2.0** connection board (LED data on the SPI0/GPIO10 path). |
 
-### Build photos (see [`HARDWARE_SETUP.md`](../HARDWARE_SETUP.md))
+### Build photos (see [`HARDWARE_SETUP.md`](../P2-platform/HARDWARE_SETUP.md))
 
 | File | Phase | What it is |
 |------|-------|------------|

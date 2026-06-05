@@ -33,5 +33,6 @@ Beyond the central list (`ones`, `addbits`), these were hit and verified on `pnu
 This dev container has **`pnut-ts` only** — `pnut-term-ts` is **not installed**, so the device
 check (§0), flash (§3), and log-inspect (§4) steps cannot run here. The in-container loop is
 **compile-only** (`pnut-ts -d {{SPIN2_TOP_FILE}}` from `{{P2_WORK_DIR}}`). Hand the compiled
-`.bin` and `DOCs/P2_BRINGUP_PLAYBOOK.md` to {{USER_NAME}} for the flash/run/observe half on the
-bench, and resume diagnosis (§5) from the log {{USER_NAME}} pastes back.
+`.bin` and the live bench playbook (`DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`) to
+{{USER_NAME}} for the flash/run/observe half on the bench, and resume diagnosis (§5) from the log
+{{USER_NAME}} pastes back.

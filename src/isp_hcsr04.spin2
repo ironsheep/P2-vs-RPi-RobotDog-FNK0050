@@ -19,7 +19,7 @@
    is meant to run in its own cog as a producer (see DOCs/P2_FIRMWARE_THEORY_OF_OPS.md).
 
    GOTCHA: HC-SR04 ECHO is a 5 V output. It MUST be divided to <= 3.3 V before reaching the P2
-   pin (the P2 is not 5 V tolerant). See DOCs/P2_MIGRATION_WIRING.md.
+   pin (the P2 is not 5 V tolerant). See DOCs/P2-platform/P2_MIGRATION_WIRING.md.
 
    Two ranging paths:
    -- BLOCKING poll: start() + readDistanceMm()/readDistanceCm() -- simple, used by the

@@ -3,10 +3,12 @@
 # Smooth-Motion + 3-Cog + IMU-Leveling — Bench Verification Playbook
 
 The on-hardware proof for the **smooth-motion / 3-cog integration / IMU-leveling** sprint
-(build **0.1.1**). Every exercise drives the robot **through the production backend mailboxes**
-(`dog.postCommand` / `io.postCommand`) via scripted headless driver tops — never a bespoke servo
-shortcut path ([[production-path-testing]]). Run it when you are at the bench; results here are
-what lets `sprint-closeout` report "verified on the canonical target."
+(build 0.1.1), **extended into the bench-certification playbook for build 0.1.2** — it now also
+covers the post-0.1.1 behaviors (power-on glide, `CMD_CROUCH`, the low-battery **warning** band,
+and the `CMD_SHAKE` / `CMD_SALUTE` paw gestures). Every exercise drives the robot **through the
+production backend mailboxes** (`dog.postCommand` / `io.postCommand`) via scripted headless driver
+tops — never a bespoke servo shortcut path ([[production-path-testing]]). Run it when you are at the
+bench; results here are what lets `sprint-closeout` report "verified on the canonical target."
 
 ![doc-test](https://img.shields.io/badge/doc-test-informational?labelColor=black)
 ![platform-Propeller 2](https://img.shields.io/badge/platform-Propeller%202-blue?labelColor=black)
@@ -14,14 +16,22 @@ what lets `sprint-closeout` report "verified on the canonical target."
 ![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
 ![license-MIT](https://img.shields.io/badge/license-MIT-green?labelColor=black)
 
-> **Build:** ships as **0.1.1** (`FW_VERSION_*` in `src/isp_version.spin2`).
+> **Build:** **certifies 0.1.2** (`FW_VERSION_*` in `src/isp_version.spin2` still reads `0.1.1`
+> until the certification-sprint closeout bumps it — see
+> [`HARDWARE-CERTIFICATION-SPRINT-PLAN.md`](HARDWARE-CERTIFICATION-SPRINT-PLAN.md) §5).
 > **Target:** the **P2 bench unit** — one P2 Edge on the adapter plate, **battery connected**
 > (the board regulates 5 V → 3.3 V from the pack; do not power the P2 from USB alone for servo
 > tests), **Load/servo switch ON**, USB serial to the **programming port**.
 > **Terminal:** **2 Mbaud (2,000,000)**, 8-N-1 — the project standard for all P2 comms.
-> **Est. run time:** ~30–40 min (four driver flashes + an opportunistic low-battery check).
+> **Est. run time:** ~40–55 min (five driver flashes + two opportunistic battery checks).
 
-> **Relationship to the standing bring-up playbook.** `DOCs/P2_BRINGUP_PLAYBOOK.md` proves each
+> **Exercise order is foundational-first.** The exercises run broadest-dependency → narrowest: the
+> **crouch base (Exercise 1) is proven before** the power-on glide and poses that rise *from* it, and
+> before leveling (Exercise 3), which measures the body tilt *through* a crouch→stand approach. That
+> way a crouch fault is caught at its source instead of silently corrupting a leveling reading or a
+> pose downstream. Each later rung adds one behavior on top of the proven base.
+
+> **Relationship to the standing bring-up playbook.** `DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md` proves each
 > driver **standalone** (I²C, IMU, buzzer, LED, ultrasonic, servos, one leg). **Run that green
 > first** — this playbook assumes every subsystem already passed there and now exercises them
 > **integrated, through the production mailboxes**, against this sprint's behavioral contract
@@ -32,7 +42,7 @@ what lets `sprint-closeout` report "verified on the canonical target."
 ## >> LIFT / SUPPORT THE ROBOT << — read before every motion exercise
 
 Every exercise below **moves servos**. On launch each driver calibrates the gyro (hold the body
-**still and level**) and then **STANDS via IK**, after which it walks/poses on its own schedule.
+**still and level**) and then **glides up to STAND**, after which it walks/poses on its own schedule.
 
 1. **Lift and support the robot** so the legs hang free, or stand it where a stumble can't fall it
    off the bench. Keep hands clear of the joints once it starts.
@@ -40,9 +50,9 @@ Every exercise below **moves servos**. On launch each driver calibrates the gyro
    "logic-only" mode powers neither.
 3. **HC-SR04 ECHO is 5 V undivided** → reaches **P9 through the ~1 kΩ inline series resistor**
    (P2 pin clamps to VIO, ≤ 10 mA). Confirm that resistor is in line before powering the Load rail
-   (`DOCs/P2_MIGRATION_WIRING.md` §4).
+   (`DOCs/P2-platform/P2_MIGRATION_WIRING.md` §4).
 4. **Battery, not USB**, powers the servos. A sagging pack will brown-out mid-gait — start each
-   run on a healthy pack (and see Exercise 6 for the low-battery behavior).
+   run on a healthy pack (and see Exercise 7 for the low-battery behavior).
 
 ---
 
@@ -57,12 +67,19 @@ pnut-ts -d -q src/<driver>.spin2
 pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --end-marker "<MARKER>" --timeout <s>
 ```
 
-| Driver | End-marker | Timeout | Proves (plan §) |
+| Driver | End-marker | Timeout | Proves (cert Ex) |
 |---|---|---|---|
-| `src/test_dog_stand.spin2`      | `STAND_DONE` | 75  | engine smoothness + eased poses (§1, §2) |
-| `src/test_dog_level.spin2`      | `LEVEL_DONE` | 80  | IMU static leveling: measure → trim → re-measure (§5) |
-| `src/test_dog_gaits.spin2`      | `GAITS_DONE` | 130 | full gait catalog + speed knob (§3) |
-| `src/isp_robot_dog_top.spin2`   | `DEMO_DONE`  | 90  | 3-cog concurrency + blend + smart-pin ranging (§4, §2-blend) |
+| `src/test_dog_stand.spin2`      | `STAND_DONE`  | 75  | crouch base (glide + `CMD_CROUCH`) + eased poses (Ex 1, 2) |
+| `src/test_dog_level.spin2`      | `LEVEL_DONE`  | 80  | IMU leveling residual (Ex 3) |
+| `src/test_dog_gaits.spin2`      | `GAITS_DONE`  | 130 | full gait catalog + speed knob (Ex 4) |
+| `src/test_dog_tricks.spin2`     | `TRICKS_DONE` | 90  | `CMD_SHAKE` / `CMD_SALUTE` paw gestures (Ex 5) |
+| `src/isp_robot_dog_top.spin2`   | `DEMO_DONE`   | 90  | 3-cog concurrency + blend + smart-pin ranging (Ex 6) |
+
+> **New / reordered for the 0.1.2 certification:** the **crouch base is now Exercise 1** (proven
+> first — `test_dog_stand` posts `CMD_CROUCH`→`CMD_STAND` as its first moves, before any pose), so
+> Exercises 1 and 2 share one `test_dog_stand` flash. Exercise 3 (leveling) is a **residual** check
+> (the stance trim is now committed). Exercise 5 adds the paw gestures; Exercise 8 adds the
+> low-battery **warning** band.
 
 Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers inline.
 
@@ -70,12 +87,12 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 > launches the **real 3-cog shape** — cog0 test facility, cog1 backend/I²C (motors + head + IMU +
 > battery + the motion engine), cog2 IO/discrete pins (LED + buzzer + ultrasonic). No test ever
 > runs a non-production cog shape. Isolation comes from **what cog0 commands**, not from omitting a
-> cog: the motion-only drivers (`test_dog_stand` / `test_dog_level` / `test_dog_gaits`) keep cog2
-> **present but quiescent** — a static dim-green "IO cog alive" LED, and **ranging dormant** (the
-> unproven smart-pin path never fires because no `IO_RANGE_ON` is sent). Only `isp_robot_dog_top`
-> activates mailbox B (LED animation + ranging + beep). So the bring-up ladder below adds exactly
-> one new behavior per rung while the topology stays constant — a new failure at rung N is
-> attributable to that rung's added behavior, not to a changed cog shape.
+> cog: the motion-only drivers (`test_dog_stand` / `test_dog_level` / `test_dog_gaits` /
+> `test_dog_tricks`) keep cog2 **present but quiescent** — a static dim-green "IO cog alive" LED, and
+> **ranging dormant** (the unproven smart-pin path never fires because no `IO_RANGE_ON` is sent).
+> Only `isp_robot_dog_top` activates mailbox B (LED animation + ranging + beep). So the bring-up
+> ladder below adds exactly one new behavior per rung while the topology stays constant — a new
+> failure at rung N is attributable to that rung's added behavior, not to a changed cog shape.
 
 ---
 
@@ -89,65 +106,93 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   cd "$(git rev-parse --show-toplevel)"
   rc=0; for f in src/*.spin2; do pnut-ts -q "$f" || rc=1; done; rm -f src/*.bin; echo "rc=$rc"
   ```
-- **Expected:** every object compiles, `rc=0`, no errors/warnings (39/39 — the three
-  production-shape scenario tops `test_dog_stand`/`test_dog_level`/`test_dog_gaits` replaced the
-  retired single-cog harnesses). Any failure ⇒ fix before flashing anything.
+- **Expected:** every object compiles, `rc=0`, no errors/warnings (**41/41** as of the certification
+  sprint — the production-shape scenario tops plus `test_dog_tricks` added the post-0.1.1 coverage).
+  Any failure ⇒ fix before flashing anything.
 - **Pass/fail:** `[ ]`   objects compiled: ____ / ____
 
 ---
 
-## Exercise 1 — Engine smoothness: eased poses (no snap)
+## Exercise 1 — Crouch base: power-on glide + `CMD_CROUCH` — *prove first*
 
-- **Verifies:** §1 fixed-rate eased engine + §2 poses retrofitted onto it — RELAX→STAND→SIT→STAND
-  and a head pan, all **gapless** (the "beat Freenove's staccato" bar). `«#3320»`, `«#3321»`.
+- **Verifies:** the **foundational crouch base** that everything downstream rises from or measures
+  through — proven **first** so a crouch fault is caught at its source, not mistaken for a glide,
+  pose, or leveling fault later. Two parts on one flash: (a) the **power-on glide** (cert §1 —
+  `seedStand` snaps once to the deep crouch then eases up over `POWERON_FRAMES = 75`, ~1.5 s, instead
+  of snapping to attention); (b) the **`CMD_CROUCH`** latched pose eases to the symmetric deep crouch
+  (feet under body, X = 0, `CROUCH_HEIGHT_MM = 55`) and `CMD_STAND` rises back out of it. `«#3320»`.
+- **Targets:** 1 P2 bench unit (full 3-cog shape), all 12 leg servos, battery, Load ON.
+- **Driver:** `src/test_dog_stand.spin2` → `STAND_DONE` (timeout 75). At launch the backend's
+  power-on `seedStand` runs (the glide); it then posts `CMD_CROUCH` → `CMD_STAND` as its **first**
+  moves — before any pose — so the crouch is exercised in isolation up front.
+- **Setup:** Robot lifted/supported so the legs move free, held still & level during the
+  "calibrating gyro" countdown. Confirm "IO cog alive in cog N" + a steady dim-green ring (3-cog
+  shape up, cog2 present but idle).
+- **Action:** Flash & run headless. Watch, in order: (1) the **power-on rise** at the very first
+  move after gyro-cal; (2) the posted **`CMD_CROUCH`** descent and the **`CMD_STAND`** rise back
+  (console shows `-- post CROUCH ... --` then `-- post STAND ... --`).
+- **Expected:**
+  - **Power-on glide:** the body **rises smoothly crouch→stand over ~1.5 s** — a gentle glide, **not
+    a snap to attention** (lower peak current; the rise is plainly observable).
+  - **`CMD_CROUCH`:** eases **down** to a low, **symmetric** crouch (all four feet drawn under the
+    body, level, no snap); `CMD_STAND` eases **back up** to neutral. No joint slams a limit (the
+    reachability guard holds).
+- **Pass/fail:** `[ ]`   Power-on glide (rises, no snap)? ____   `CMD_CROUCH` eased + symmetric? ____
+  STAND rises cleanly? ____
+
+## Exercise 2 — Engine smoothness: eased poses (no snap)
+
+- **Verifies:** §1 fixed-rate eased engine + §2 poses — RELAX→STAND→SIT→STAND and a head pan, all
+  **gapless** (the "beat Freenove's staccato" bar). `«#3320»`, `«#3321»`.
 - **Targets:** 1 P2 bench unit (full 3-cog shape), all 13 servos, battery, Load ON.
-- **Driver:** `src/test_dog_stand.spin2` → `STAND_DONE` (timeout 75). Launches the full 3-cog shape
-  (cog2 IO quiescent — static dim-green LED, ranging dormant), then posts on mailbox A:
-  init STAND → `CMD_RELAX` → `CMD_STAND` → `CMD_SIT` → `CMD_STAND` → head pan 60/120/90.
-- **Setup:** Robot lifted/supported, held still & level during the "calibrating gyro" countdown.
-  Confirm the console reports "IO cog alive in cog N" and the ring shows a steady dim green (proof
-  the 3-cog shape launched and cog2 is present but idle).
-- **Action:** Flash & run the driver headless. Watch the body through each transition; watch the
-  console telemetry (`mode=`, `tilt p/r`). Compare the motion qualitatively against a Freenove
-  stock-firmware demo clip.
-- **Expected:** Each transition **eases in and out** (all joints start and arrive together) with
-  **no snap** at either end and **no stop-and-hold gap** between the named poses; visibly smoother
-  / less staccato than the Freenove clip. Telemetry shows `mode=0` (IDLE) at rest, `mode=3`
-  (RELAXED) after `CMD_RELAX`. Head pans smoothly to each angle.
-- **Pass/fail:** `[ ]`   Gapless vs Freenove? ____   Any snap seen at a boundary? ____
+- **Driver:** `src/test_dog_stand.spin2` → `STAND_DONE` (**the same flash as Exercise 1** — no
+  separate build). After the crouch check it posts on mailbox A:
+  `CMD_RELAX` → `CMD_STAND` → `CMD_SIT` → `CMD_STAND` → head pan 60/120/90.
+- **Setup:** As Exercise 1 (same run, robot lifted/supported).
+- **Action:** Continue watching the same run through each named transition; watch the console
+  telemetry (`mode=`, `tilt p/r`). Compare the motion qualitatively against a Freenove stock-firmware
+  demo clip.
+- **Expected:** each transition **eases in and out** (all joints start and arrive together) with **no
+  snap** at either end and **no stop-and-hold gap** between the named poses; visibly smoother / less
+  staccato than the Freenove clip. Telemetry shows `mode=0` (IDLE) at rest, `mode=3` (RELAXED) after
+  `CMD_RELAX`. Head pans smoothly to each angle.
+- **Pass/fail:** `[ ]`   Poses gapless vs Freenove? ____   Any snap seen at a boundary? ____
 
-## Exercise 2 — IMU static leveling: measure → trim → re-measure
+## Exercise 3 — IMU static leveling: **residual** check (trim already committed)
 
-- **Verifies:** §5 — measure body tilt at the calibrated neutral stand, apply the per-leg foot-Y
-  stance trim, confirm residual ≈ 0. `«#3324»`. This exercise also **captures** the stance-trim
-  values that get committed to `isp_calibration.spin2`.
+- **Verifies:** §5 / cert §3 — the **already-committed** stance trim (`stancePitchDeg = -3`,
+  `stanceRollDeg = 2`, metered 2026-06-03) nulls the neutral-stand tilt, i.e. the **residual ≈ 0**,
+  and the **sign convention** is correct. `«#3324»`. (This is the one open calibration item; the
+  trim is no longer measured-from-zero — that path is kept below only as the fallback.) **Depends on
+  Exercise 1:** the measurement rises into the stand *through the crouch-approach*, so the crouch
+  must already be proven good (Ex 1) for this reading to be trusted.
 - **Targets:** 1 P2 bench unit (full 3-cog shape), all 12 leg servos, IMU, battery, Load ON.
 - **Driver:** `src/test_dog_level.spin2` → `LEVEL_DONE` (timeout 80). Launches the full 3-cog shape
-  (cog2 IO quiescent), echoes the currently-compiled stance trim, commands `CMD_STAND`, settles
-  ~6 s, then averages `getAttitude()` over 32 samples.
+  (cog2 IO quiescent), echoes the currently-compiled stance trim, runs the **crouch→stand→measure ×3**
+  protocol (rise into the stand each cycle so backlash is taken up one way), and averages
+  `getAttitude()`.
 - **Setup:** **CRITICAL — the body must measure on its FEET, bearing its own weight, on a
-  KNOWN-LEVEL surface.** Support it for gyro cal + the stand transition, then **set it down level**
-  during the settle window before the measure. A *lifted* measurement reads how your hands hold it,
-  not stance level; a tilted surface corrupts the trim.
-- **Action — measure pass (trim still 0):**
-  1. Confirm `isp_calibration` `stancePitchDeg`/`stanceRollDeg` are **0** (the harness prints
-     "trim is 0 → this MEASURE is the RAW un-leveled tilt").
-  2. Flash & run. Record `pitch avg` and `roll avg` (the `x10` tenths-of-a-degree figures give
-     sub-degree resolution).
-- **Action — apply & re-measure:**
-  3. Paste the measured `pitch avg` / `roll avg` into `isp_calibration.spin2`
-     `stancePitchDeg` / `stanceRollDeg`. Rebuild (`pnut-ts -q src/isp_calibration.spin2` clean).
-  4. Re-run the driver. The harness now prints "trim applied → this MEASURE is the RESIDUAL tilt;
-     expect ~0."
-- **Expected:** Measure pass reports a non-trivial tilt; after applying the trim and re-running,
-  the **residual pitch/roll is near 0** (small band). If residual grew, **negate** the pasted
-  values and re-run (sign convention is bench-confirmed here).
+  KNOWN-LEVEL surface.** Support it for gyro cal + the crouch/stand transitions, then **set it down
+  level** during the settle window before each measure. A *lifted* measurement reads how your hands
+  hold it, not stance level; a tilted surface corrupts the reading. **Use a healthy pack** — a
+  sagging pack makes the tilt unrepeatable (see Exercise 8).
+- **Action — residual pass (the expected path):**
+  1. Confirm `isp_calibration` carries the committed `stancePitchDeg = -3` / `stanceRollDeg = 2`
+     (the harness prints **"trim applied → this MEASURE is the RESIDUAL tilt; expect ~0"**).
+  2. Flash & run. Record the measured (now **residual**) `pitch avg` / `roll avg`.
+- **Expected:** the **residual pitch/roll is near 0** (small band, repeatable across the 3 cycles).
+  Leveling is then **certified as-is** and the `isp_calibration.spin2:60` sign-convention comment
+  is **locked** (bench-confirmed). If the residual instead **grew** vs. the raw −3/+2 magnitude, the
+  sign is inverted → **negate** the stored values, rebuild, re-run, and update the `:60` comment.
+- **Fallback — full re-meter (only if residual is *not* ≈ 0 and not a clean sign flip):** temporarily
+  set the two trims to **0**, rebuild, re-run (harness prints "trim is 0 → RAW un-leveled tilt"),
+  paste the measured average back in, rebuild, and re-run to confirm residual ≈ 0.
 - **Pass/fail:** `[ ]`
-  - Raw measured: pitch ____° (×10 ____)  roll ____° (×10 ____)
-  - Residual after trim: pitch ____°  roll ____°
-  - **Values committed to `isp_calibration`:** stancePitchDeg = ____  stanceRollDeg = ____
+  - Residual (trim −3/+2 applied): pitch ____°  roll ____°   ≈ 0? ____
+  - Sign convention confirmed / comment locked? ____   (negate needed? ____)
+  - Re-meter fallback used? ____  → new stancePitchDeg = ____  stanceRollDeg = ____
 
-## Exercise 3 — Full gait catalog + speed knob
+## Exercise 4 — Full gait catalog + speed knob
 
 - **Verifies:** §3 — every gait runs a stable trot in the correct direction, and the speed arg
   visibly changes cadence without losing smoothness. `«#3322»`.
@@ -171,10 +216,35 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 - **Expected:** Each gait trots in the **right direction**, smoothly, with the swing-foot lift
   visible; no joint slams to a limit (reachability guard holds). In the speed segment, **slow**
   (arg0=5) is an obviously slower, smoother cadence than **fast** (arg0=30); both stay smooth.
-  Between gaits the `CMD_STOP` **eases** back to neutral (blend, no snap — see Exercise 4).
+  Between gaits the `CMD_STOP` **eases** back to neutral (blend, no snap — see Exercise 6).
 - **Pass/fail:** `[ ]`   FWD __ BACK __ TURN-L __ TURN-R __ STEP-L __ STEP-R __  Speed differs? __
 
-## Exercise 4 — 3-cog concurrency + blend + smart-pin ranging
+## Exercise 5 — Paw gestures: `CMD_SHAKE` / `CMD_SALUTE`
+
+- **Verifies:** cert §1 — the one-shot right-front-paw gestures: each eases into a stable **SIT**
+  base, acts with the FR paw (handshake bob / held salute) while the other three legs hold the sit,
+  lowers the paw, and **ends seated** (a later STAND stands up). Gesture **rejects while busy**;
+  no snaps.
+- **Targets:** 1 P2 bench unit (full 3-cog shape), all 13 servos, battery, Load ON.
+- **Driver:** `src/test_dog_tricks.spin2` → `TRICKS_DONE` (timeout 90). Launches the full 3-cog shape
+  (cog2 IO quiescent), then on mailbox A: init STAND → `CMD_SIT` → `CMD_STAND` →
+  `CMD_SHAKE` → `CMD_STAND` → `CMD_SALUTE` → `CMD_STAND`. Poses wait on the move-complete edge;
+  gestures wait on the busy flag.
+- **Setup:** Robot lifted/supported so the FR paw swings free; keep clear of the joints once moving.
+- **Action:** Flash & run headless. Watch the FR (right-front) paw through SHAKE then SALUTE and the
+  console (`-- post SHAKE ... --`, `isBusy`, per-leg dump at each step).
+- **Expected:**
+  - **SHAKE:** body **eases into SIT**, the **FR paw lifts and bobs** (handshake), then lowers and
+    the body **stays seated**; the other three legs hold the sit throughout. `CMD_STAND` after it
+    rises normally.
+  - **SALUTE:** body eases into SIT, the **FR paw raises to a held salute** (~held high), then lowers
+    and stays seated.
+  - **Busy-reject:** the driver's waits show each gesture runs to completion (`isBusy` TRUE→FALSE);
+    a second gesture posted while busy would be ignored (D3). No snap at any boundary.
+- **Pass/fail:** `[ ]`   SHAKE (sit→bob→seated)? ____   SALUTE (sit→hold→seated)? ____
+  other 3 legs steady? ____   any snap? ____
+
+## Exercise 6 — 3-cog concurrency + blend + smart-pin ranging
 
 - **Verifies:** §4 — all three cogs live at once (cog0 orchestrator, cog1 backend/I²C, cog2
   IO/discrete pins): **LED animation + live ranging + a gait + a beep simultaneously with no
@@ -208,7 +278,7 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   - Ranging live integrated — `pingSeq` advances / `fresh=1` during the gait? ____  dist@hand ____ mm
   - Blend (FWD→TURN no restart; STOP eases)? ____
 
-## Exercise 5 — Safety floor: low battery eases to RELAX — *opportunistic*
+## Exercise 7 — Safety floor: low battery eases to RELAX — *opportunistic*
 
 - **Verifies:** §2/§6 — when the pack drops below cutoff the backend forces rest, and that forced
   relax **eases (does not snap)**; mode reports `MODE_LOWBATT`. `«#3321»` (eased
@@ -227,6 +297,25 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   not a snap) and telemetry shows `mode=4` (LOWBATT); it stays latched there.
 - **Pass/fail:** `[ ]`   batt at trip ____ mV   eased (not snapped)? ____   mode→4? ____
 
+## Exercise 8 — Low-battery **warning** band (6.4–6.8 V) — *opportunistic*
+
+- **Verifies:** cert §1 — the throttled low-battery **warning log** (distinct from the Exercise 7
+  cutoff): at/below `BATTERY_WARN_MV = 6800` the backend logs a warning every `BATTERY_WARN_SECS = 5`
+  s **without** forcing rest, so results are flagged unreliable *before* the pack sags into the
+  6.4 V floor. Added because a depleted pack corrupted the leveling measurement (Exercise 3).
+- **Targets:** 1 P2 bench unit on a pack sitting in the **6.4–6.8 V** band.
+- **Trigger detail:** `senseTask` emits `!! BATTERY LOW <mV> mV (cutoff 6400 mV) -- charge soon;
+  results unreliable` when `battMilliVolts < 6800` and the 5 s throttle window has elapsed; it does
+  **not** touch `lowBattReadings`/the safety floor (that is strictly `< 6400 mV`, Exercise 7).
+- **⚠ Caution:** opportunistic — run when a pack has naturally drained into 6.4–6.8 V (any motion
+  driver will do), or on a bench supply set in-band. Do **not** deep-discharge a good pack to test.
+- **Setup:** Pack/supply in the 6.4–6.8 V band; robot supported.
+- **Action:** Run any motion driver and watch the console once `battery=` sits in-band.
+- **Expected:** the `!! BATTERY LOW <mV> mV ...` line logs **~every 5 s** (throttled, not every
+  sample), and the robot **keeps operating** — `mode=` stays out of `4` (`MODE_LOWBATT`) as long as
+  the reading stays ≥ 6400 mV. Crossing below 6400 mV escalates to the Exercise 7 floor.
+- **Pass/fail:** `[ ]`   warning logs ~5 s apart? ____   batt in-band ____ mV   stayed out of floor (mode≠4)? ____
+
 ---
 
 ## Results → closeout
@@ -238,11 +327,15 @@ than one wrong behavior, gather the whole symptom set first**, then hand it to `
 one inventory — multiple manual-test failures often share one root cause. `sprint-closeout` reads
 these results to report verification state honestly.
 
-**Coverage note (no silent caps).** This sprint's only automated gate is the Exercise 0 compile
-sweep; behavioral correctness is proven **only** by the bench exercises above. The §4 non-blocking
-smart-pin ranging path is **first proven here** (Exercise 4) — until that passes it remains
-unproven on hardware. Exercise 5 is **opportunistic** (it depends on pack state) and is the one
-exercise without a dedicated, repeatable trigger.
+**Coverage note (no silent caps).** Ordered **foundational-first**: the crouch base (Ex 1) is proven
+before the glide/poses that rise from it and before leveling (Ex 3), which measures *through* the
+crouch-approach — so a crouch fault is caught at its source, not mistaken for a leveling/pose fault.
+The only automated gate is the Exercise 0 compile sweep; behavioral correctness is proven **only** by
+the bench exercises above. The non-blocking smart-pin ranging path is **first proven** in Exercise 6
+— until that passes it remains unproven on hardware. **Exercises 7 and 8 are opportunistic**
+(pack-state dependent — the low-battery floor and warning band have no repeatable trigger short of an
+in-band pack/supply); run them whenever a pack is naturally in range. **Flash economy:** Exercises 1
+(crouch base) and 2 (eased poses) share a single `test_dog_stand` flash.
 
 ---
 
