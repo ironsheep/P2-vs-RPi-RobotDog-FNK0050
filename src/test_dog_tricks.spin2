@@ -1,0 +1,118 @@
+{Spin2_v47}
+'' =================================================================================================
+''   File....... test_dog_tricks.spin2
+''   Purpose.... TRICKS bench scenario in the PRODUCTION 3-cog shape: SIT, SHAKE (offer right paw),
+''               SALUTE (right paw up). Launches both service cogs (cog1 backend/I2C, cog2 IO) and
+''               drives the poses/gestures through mailbox A, dumping per-leg diagnostics at each step.
+''               Poses wait on the move-complete edge; gestures wait on the busy flag.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  >> LIFT/SUPPORT THE ROBOT << on launch (gyro cal, then it GLIDES up to stand). Shake/salute SIT
+'  first (stable tripod), lift the RIGHT-FRONT paw, then hold the sit until the next STAND. Run:
+'    pnut-ts -d -q src/test_dog_tricks.spin2
+'    pnut-term-ts -r src/test_dog_tricks.bin -b 2000000 --headless --end-marker "TRICKS_DONE" --timeout 90
+
+CON
+  _clkfreq      = 200_000_000
+  DEBUG_BAUD    = 2_000_000
+
+  PIN_SCL       = 13
+  PIN_SDA       = 15
+  PIN_WS2812    = 8
+  PIN_ECHO      = 9
+  PIN_BUZZER    = 10
+  PIN_TRIG      = 11
+
+  COUNTDOWN_S   = 8
+  COG_STACK     = 256
+  INIT_MS       = 5000               ' allow cog1 init + gyro cal + power-on glide to stand
+  COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
+
+OBJ
+  dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
+  io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B (quiescent here)
+  stack   : "isp_stack_check"                                ' COG stack-overflow detector
+
+DAT ' ---- cog launch stacks, each followed IMMEDIATELY by its overflow sentinel ----
+  backendStack     LONG  0[COG_STACK]
+  backendStackMark LONG  stack.DO_NOT_WRITE_MARK
+  ioStack          LONG  0[COG_STACK]
+  ioStackMark      LONG  stack.DO_NOT_WRITE_MARK
+
+PUB main() | backendCog, ioCog
+'' Launch the production 3-cog shape, then run the trick sequence on mailbox A.
+
+    waitms(100)
+    DEBUG("=== TRICKS scenario (production 3-cog shape): SIT / SHAKE / SALUTE ===")
+    DEBUG(">> LIFT/SUPPORT THE ROBOT. cog1 calibrates gyro (hold still) then GLIDES up to stand. <<")
+    countdown()
+
+    stack.prepStackForCheck(@ioStack, COG_STACK)             ' fill pattern + sentinel BEFORE launch
+    stack.prepStackForCheck(@backendStack, COG_STACK)
+
+    ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
+    if ioCog < 0
+        abortRun(string("FAILED to start IO cog"))
+    io.setStackCheck(@ioStack, COG_STACK)
+    io.postCommand(io.IO_LED_SOLID, COLOR_ALIVE, 0, 0, 0)     ' static "alive" indicator; ranging stays OFF
+    DEBUG("IO cog alive in cog ", udec_(ioCog), " (quiescent: static LED, ranging dormant)")
+
+    backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
+    if backendCog < 0
+        abortRun(string("FAILED to start backend cog"))
+    dog.setStackCheck(@backendStack, COG_STACK)
+    DEBUG("backend cog ", udec_(backendCog), "; init + gyro cal + glide-up STAND...")
+    waitms(INIT_MS)
+    dog.dumpState(string("init STAND (power-on glide)"))
+
+    postPose(dog.CMD_SIT,   string("SIT"))
+    postPose(dog.CMD_STAND, string("STAND"))
+    postGesture(dog.CMD_SHAKE,  string("SHAKE (right paw)"))  ' sits, shakes, ends seated
+    postPose(dog.CMD_STAND, string("STAND (after shake)"))
+    postGesture(dog.CMD_SALUTE, string("SALUTE (right paw)")) ' sits, salutes, ends seated
+    postPose(dog.CMD_STAND, string("STAND (after salute)"))
+
+    DEBUG("tricks scenario done")
+    DEBUG("TRICKS_DONE")
+    repeat
+
+PRI postPose(cmd, pNameStr) | guard
+' Post a pose and wait for the driver's move-complete FALSE->TRUE edge, then dump state.
+'
+' @param cmd - CMD_* pose; @param pNameStr - label; @local guard - bounded-wait counter
+
+    DEBUG("-- post ", zstr_(pNameStr), " --")
+    dog.postCommand(cmd, 0, 0, 0, 0)
+    guard := 0
+    repeat while dog.getMoveComplete() and (guard++ < 400)    ' wait for the move to START
+        waitms(5)
+    guard := 0
+    repeat until dog.getMoveComplete() or (guard++ > 800)     ' wait for the move to FINISH
+        waitms(5)
+    dog.dumpState(pNameStr)
+
+PRI postGesture(cmd, pNameStr) | guard
+' Post a one-shot gesture and wait on the busy flag (busy TRUE = running) to finish, then dump state.
+'
+' @param cmd - CMD_* gesture; @param pNameStr - label; @local guard - bounded-wait counter
+
+    DEBUG("-- post ", zstr_(pNameStr), " --")
+    dog.postCommand(cmd, 0, 0, 0, 0)
+    guard := 0
+    repeat while (not dog.isBusy()) and (guard++ < 400)       ' wait for the gesture to START
+        waitms(5)
+    guard := 0
+    repeat while dog.isBusy() and (guard++ < 2000)            ' wait for the gesture to FINISH (~2-3 s)
+        waitms(5)
+    dog.dumpState(pNameStr)
+
+PRI countdown() | i
+    repeat i from COUNTDOWN_S to 1
+        DEBUG("  launch in ", udec_(i), " s ...")
+        waitms(1000)
+
+PRI abortRun(pReasonStr)
+    DEBUG(zstr_(pReasonStr))
+    DEBUG("TRICKS_DONE")
+    repeat

@@ -46,8 +46,13 @@ CON ' ---- commands (frontend -> backend mailbox) ----
   '  CMD_STEP_LEFT  - sidestep left (latched); arg0 = speed
   '  CMD_STEP_RIGHT - sidestep right (latched); arg0 = speed
   '  CMD_CROUCH     - ease to a low symmetric crouch (feet under body, X=0) -- consistent approach pose
+  '  CMD_SHAKE      - one-shot: SIT, offer the right-front paw and bob it (shake hands), return to sit
+  '  CMD_SALUTE     - one-shot: SIT, raise the right-front paw to a held salute, return to sit
   #0, CMD_NONE, CMD_STOP, CMD_FORWARD, CMD_RELAX, CMD_STAND, CMD_SIT, CMD_HELLO, CMD_HEAD
-  #8, CMD_BACKWARD, CMD_TURN_LEFT, CMD_TURN_RIGHT, CMD_STEP_LEFT, CMD_STEP_RIGHT, CMD_CROUCH
+  #8, CMD_BACKWARD, CMD_TURN_LEFT, CMD_TURN_RIGHT, CMD_STEP_LEFT, CMD_STEP_RIGHT, CMD_CROUCH, CMD_SHAKE, CMD_SALUTE
+
+CON ' ---- paw-gesture stages (CMD_SHAKE / CMD_SALUTE) ----
+  #0, GST_SIT_IN, GST_ACT, GST_PAW_DOWN          ' ease into sit -> act with FR paw -> lower paw, hold sit
 
 CON ' ---- mode states (telemetry) ----
   {Spin2_Doc_CON}
@@ -80,6 +85,18 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
   HELLO_SPEED_DEG     = 20          ' wave phase advance per frame
   HELLO_FRAMES        = 36          ' frames before the gesture completes
   HELLO_LEADIN_FRAMES = 8           ' frames to ease the FR foot out to the wave reach (no start snap)
+  GEST_SIT_FRAMES     = 28          ' ease stand -> sit at the start of a paw gesture
+  GEST_RECOVER_FRAMES = 18          ' ease the FR paw back down to the sit stance after the action
+  SHAKE_LEADIN_FRAMES = 10          ' ease the FR paw out to the offer position
+  SHAKE_FRAMES        = 50          ' total FR shake action frames
+  SHAKE_REACH_X_MM    = 70          ' forward reach of the offered paw
+  SHAKE_HEIGHT_MM     = 60          ' foot extension at the offered (handshake) height
+  SHAKE_BOB_MM        = 16          ' up/down bob amplitude of the handshake
+  SHAKE_BOB_SPEED_DEG = 36          ' bob phase advance per frame (~4 bobs over the action)
+  SALUTE_RAISE_FRAMES = 14          ' ease the FR paw up to the salute
+  SALUTE_HOLD_FRAMES  = 36          ' frames to hold the salute
+  SALUTE_REACH_X_MM   = 40          ' slight forward reach of the salute
+  SALUTE_HEIGHT_MM    = 38          ' foot extension at the raised salute (paw up high)
   ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (for qsin/qcos phase math)
   DEGREES_PER_CIRCLE  = 360
   HALF_CIRCLE_DEG     = 180
@@ -148,6 +165,7 @@ DAT ' ---- internal control state (backend cog only) ----
   gaitStepDeg      LONG  GAIT_STEP_DEG                        ' phase step magnitude (the speed knob)
   gaitStepSigned   LONG  GAIT_STEP_DEG                        ' signed phase step (+ fwd/turnL/stepL, - back/stepR)
   gestureId        LONG  CMD_NONE
+  gestureStage     LONG  GST_SIT_IN                           ' stage within a paw gesture (shake/salute)
   gesturePhase     LONG  0
   helloStartX      LONG  0                                    ' FR foot X when the wave began (ease-in anchor)
   bLowBattLatched  BYTE  FALSE
@@ -496,6 +514,15 @@ PRI consumeCommand() | requestedCmd
                 helloStartX := curX[2]                        ' anchor the ease-in at the FR foot's current reach
                 activeMode := MODE_GESTURE_BUSY
                 modeState := MODE_GESTURE_BUSY
+        CMD_SHAKE, CMD_SALUTE:
+            if busyFlag == FALSE                              ' reject if a gesture is already running
+                busyFlag := TRUE
+                gestureId := requestedCmd
+                gesturePhase := 0
+                gestureStage := GST_SIT_IN                    ' ease into sit first (stable base), then act
+                armMove(0)                                    ' snapshot start[] := current stand for the sit-in ease
+                activeMode := MODE_GESTURE_BUSY
+                modeState := MODE_GESTURE_BUSY
 
 PRI applySafetyFloor()
 ' Backend-owned safety: force rest (once) when the pack drops below the cutoff.
@@ -630,6 +657,8 @@ PRI advanceGesture()
     case gestureId
         CMD_HELLO:
             advanceHello()
+        CMD_SHAKE, CMD_SALUTE:
+            advancePawGesture()
         other:
             finishGesture()
 
@@ -661,6 +690,87 @@ PRI finishGesture()
     activeMode := MODE_IDLE
     modeState := MODE_IDLE
     standPose()
+
+PRI advancePawGesture() | e, idx, sy, sz, frX, frY, actFrames
+' Staged right-front-paw gesture (shake / salute): ease into SIT for a stable base, act with the FR
+' paw while the other three legs hold the sit, lower the paw, then hold the sit (a later STAND/STOP
+' stands up). One ease everywhere -- no snaps.
+'
+' Local Variables:
+' @local e - ease factor this frame
+' @local idx - leg index; sy/sz - this leg's sit Y/Z target
+' @local frX/frY - FR foot fore/aft + extension this frame
+' @local actFrames - total frames in the act stage (gesture-specific)
+
+    case gestureStage
+        GST_SIT_IN:                                          ' ease all four feet from the start stand into the sit base
+            e := easeFactor(gesturePhase + 1, GEST_SIT_FRAMES)
+            repeat idx from 0 to NUM_LEGS - 1
+                sy := ((idx == 1) or (idx == 3)) ? SIT_FRONT_HEIGHT_MM : STAND_HEIGHT_MM   ' back legs lowered
+                sz := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM
+                curX[idx] := lerpFix(startX[idx], 0, e)
+                curY[idx] := lerpFix(startY[idx], sy, e)
+                curZ[idx] := lerpFix(startZ[idx], sz, e)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= GEST_SIT_FRAMES
+                longmove(@startX, @curX, NUM_LEGS)           ' re-anchor start[] := sit (FR action eases from here)
+                longmove(@startY, @curY, NUM_LEGS)
+                longmove(@startZ, @curZ, NUM_LEGS)
+                gesturePhase := 0
+                gestureStage := GST_ACT
+
+        GST_ACT:                                             ' FR paw acts; FL/BL/BR hold their sit (cur[] unchanged)
+            if gestureId == CMD_SALUTE
+                if gesturePhase < SALUTE_RAISE_FRAMES
+                    e := easeFactor(gesturePhase + 1, SALUTE_RAISE_FRAMES)
+                    frX := lerpFix(startX[2], SALUTE_REACH_X_MM, e)
+                    frY := lerpFix(startY[2], SALUTE_HEIGHT_MM, e)
+                else
+                    frX := SALUTE_REACH_X_MM                  ' hold the salute
+                    frY := SALUTE_HEIGHT_MM
+                actFrames := SALUTE_RAISE_FRAMES + SALUTE_HOLD_FRAMES
+            else                                             ' CMD_SHAKE
+                if gesturePhase < SHAKE_LEADIN_FRAMES
+                    e := easeFactor(gesturePhase + 1, SHAKE_LEADIN_FRAMES)
+                    frX := lerpFix(startX[2], SHAKE_REACH_X_MM, e)
+                    frY := lerpFix(startY[2], SHAKE_HEIGHT_MM, e)
+                else
+                    frX := SHAKE_REACH_X_MM
+                    frY := SHAKE_HEIGHT_MM
+                frY += qsin(SHAKE_BOB_MM, degToUnits(gesturePhase * SHAKE_BOB_SPEED_DEG), 0)   ' up/down bob
+                actFrames := SHAKE_FRAMES
+            setCur(2, frX, frY, -STANCE_LATERAL_MM)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= actFrames
+                longmove(@startX[2], @curX[2], 1)            ' anchor FR for the lower-back-to-sit ease
+                longmove(@startY[2], @curY[2], 1)
+                longmove(@startZ[2], @curZ[2], 1)
+                gesturePhase := 0
+                gestureStage := GST_PAW_DOWN
+
+        GST_PAW_DOWN:                                        ' lower the FR paw back to the sit stance
+            e := easeFactor(gesturePhase + 1, GEST_RECOVER_FRAMES)
+            setCur(2, lerpFix(startX[2], 0, e), lerpFix(startY[2], STAND_HEIGHT_MM, e), lerpFix(startZ[2], -STANCE_LATERAL_MM, e))
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= GEST_RECOVER_FRAMES
+                finishPawGesture()
+
+PRI finishPawGesture()
+' End a paw gesture seated (do NOT stand): hold the current sit until a later STAND/STOP.
+
+    busyFlag := FALSE
+    gestureId := CMD_NONE
+    activeMode := MODE_IDLE
+    modeState := MODE_IDLE
+    longmove(@tgtX, @curX, NUM_LEGS)                         ' tgt := cur (sit) so stepPose just holds
+    longmove(@tgtY, @curY, NUM_LEGS)
+    longmove(@tgtZ, @curZ, NUM_LEGS)
+    moveFrames := 0
+    moveFrame := 0
+    moveComplete := TRUE
 
 PRI standPose()
 ' Ease all four feet to the neutral standing stance (blends from wherever the feet are now).
