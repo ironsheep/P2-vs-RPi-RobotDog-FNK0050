@@ -52,7 +52,8 @@ CON ' ---- commands (frontend -> backend mailbox) ----
   #8, CMD_BACKWARD, CMD_TURN_LEFT, CMD_TURN_RIGHT, CMD_STEP_LEFT, CMD_STEP_RIGHT, CMD_CROUCH, CMD_SHAKE, CMD_SALUTE
 
 CON ' ---- paw-gesture stages (CMD_SHAKE / CMD_SALUTE) ----
-  #0, GST_SIT_IN, GST_ACT, GST_PAW_DOWN          ' ease into sit -> act with FR paw -> lower paw, hold sit
+  #0, GST_SIT_IN, GST_ACT, GST_PAW_DOWN, GST_LEAN_IN, GST_LEAN_OUT
+  ' paw gestures: SIT_IN -> ACT -> PAW_DOWN ;  hello: LEAN_IN -> ACT -> LEAN_OUT (rebalance to free a leg)
 
 CON ' ---- mode states (telemetry) ----
   {Spin2_Doc_CON}
@@ -97,6 +98,12 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
   SALUTE_HOLD_FRAMES  = 36          ' frames to hold the salute
   SALUTE_REACH_X_MM   = 40          ' slight forward reach of the salute
   SALUTE_HEIGHT_MM    = 38          ' foot extension at the raised salute (paw up high)
+
+CON ' ---- free-leg rebalance (lean the CoG into the support triangle of the other three legs) ----
+  FREE_FR_LEG         = 2           ' the front-right leg index (the leg the HELLO wave frees)
+  LEAN_FRAMES         = 18          ' eased body-lean in/out around a freed leg (~0.36 s)
+  LEAN_FWD_MM         = 8           ' fore/aft body lean magnitude (bench-tunable; +X assumed forward, flip if reversed)
+  LEAN_LAT_MM         = 12          ' lateral body lean magnitude (bench-tunable)
   ANGLE_UNITS_PER_DEG = 11_930_465  ' = 2^32 / 360 (for qsin/qcos phase math)
   DEGREES_PER_CIRCLE  = 360
   HALF_CIRCLE_DEG     = 180
@@ -116,7 +123,11 @@ CON ' ---- smooth-motion engine (fixed-rate, eased, blendable) ----
   EASE_ONE        = 4096            ' fixed-point 1.0 for the ease/lerp math (12-bit)
   POSE_FRAMES     = 30              ' eased duration of a pose transition (~0.6 s @ 50 Hz)
   HEAD_FRAMES     = 20              ' eased duration of a head pan (~0.4 s)
-  POWERON_FRAMES  = 75              ' gentle power-on GLIDE crouch->stand (~1.5 s) -- rise, don't snap to attention
+  POWERON_FRAMES  = 75              ' (legacy) eased glide duration; power-on now eases to RELAX, not STAND
+  SEED_X_MM       = 0               ' power-on soft-start: neutral seed has feet UNDER the body (no fore/aft)
+  SEED_HEIGHT_MM  = 85              ' low symmetric NEUTRAL stance -- the safe first-contact landing (mid-range)
+  SEED_FRAMES     = 60              ' soft-start ease neutral->relax, blocking (~0.9 s @ SEED_FRAME_MS)
+  SEED_FRAME_MS   = 15              ' ms per soft-start frame
   REACH_MIN_MM    = 25             ' checkPoint reachability guard (Freenove leg-length floor)
   REACH_MAX_MM    = 130            ' checkPoint reachability guard (Freenove leg-length ceiling)
 
@@ -511,7 +522,8 @@ PRI consumeCommand() | requestedCmd
                 busyFlag := TRUE
                 gestureId := CMD_HELLO
                 gesturePhase := 0
-                helloStartX := curX[2]                        ' anchor the ease-in at the FR foot's current reach
+                gestureStage := GST_LEAN_IN                   ' rebalance the CoG FIRST, then wave (free-leg safety)
+                armMove(0)                                    ' snapshot start[] := current stand for the lean ease
                 activeMode := MODE_GESTURE_BUSY
                 modeState := MODE_GESTURE_BUSY
         CMD_SHAKE, CMD_SALUTE:
@@ -662,25 +674,73 @@ PRI advanceGesture()
         other:
             finishGesture()
 
-PRI advanceHello() | waveY, reachX
-' Wave the front-right leg by oscillating its foot height; finish after HELLO_FRAMES. The reach
-' eases out from the foot's start position over HELLO_LEADIN_FRAMES so there is no start snap; the
-' ease back to stand is handled by finishGesture -> standPose.
+PRI advanceHello() | e, idx, lx, ly, lz, waveY
+' Wave the front-right leg -- but REBALANCE first so the leg frees without tipping. Three stages:
+'   LEAN_IN : ease all four feet stand -> a LEANED stand (CoG shifted into the FL+BL+BR triangle,
+'             away from FR) via the general leanStandFoot() rebalance primitive,
+'   ACT     : the FR foot waves (oscillating height) from the leaned stand; the other three hold,
+'   LEAN_OUT: ease the lean back out to the neutral level stand, then finishGesture().
 '
 ' Local Variables:
-' @local waveY - oscillating foot extension for the wave
-' @local reachX - fore/aft reach, eased in over the lead-in then held
+' @local e - ease factor; idx - leg index; lx/ly/lz - leaned-stand foot target; waveY - wave extension
 
-    if gesturePhase < HELLO_LEADIN_FRAMES
-        reachX := lerpFix(helloStartX, HELLO_X_MM, easeFactor(gesturePhase + 1, HELLO_LEADIN_FRAMES))
-    else
-        reachX := HELLO_X_MM
-    waveY := STAND_HEIGHT_MM + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
-    setCur(2, reachX, waveY, -STANCE_LATERAL_MM)             ' FR foot waves; the other three hold their current pose
-    commitCur()
-    gesturePhase++
-    if gesturePhase >= HELLO_FRAMES
-        finishGesture()
+    case gestureStage
+        GST_LEAN_IN:
+            e := easeFactor(gesturePhase + 1, LEAN_FRAMES)
+            repeat idx from 0 to NUM_LEGS - 1
+                lx, ly, lz := leanStandFoot(idx, FREE_FR_LEG)
+                curX[idx] := lerpFix(startX[idx], lx, e)
+                curY[idx] := lerpFix(startY[idx], ly, e)
+                curZ[idx] := lerpFix(startZ[idx], lz, e)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= LEAN_FRAMES
+                longmove(@startX, @curX, NUM_LEGS)           ' re-anchor start[] := leaned stand
+                longmove(@startY, @curY, NUM_LEGS)
+                longmove(@startZ, @curZ, NUM_LEGS)
+                gesturePhase := 0
+                gestureStage := GST_ACT
+
+        GST_ACT:                                             ' FR waves from the leaned stand; FL/BL/BR hold the lean
+            lx, ly, lz := leanStandFoot(FREE_FR_LEG, FREE_FR_LEG)
+            waveY := ly + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
+            if gesturePhase < HELLO_LEADIN_FRAMES
+                setCur(FREE_FR_LEG, lerpFix(startX[FREE_FR_LEG], HELLO_X_MM, easeFactor(gesturePhase + 1, HELLO_LEADIN_FRAMES)), waveY, lz)
+            else
+                setCur(FREE_FR_LEG, HELLO_X_MM, waveY, lz)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= HELLO_FRAMES
+                longmove(@startX, @curX, NUM_LEGS)           ' anchor for the unlean ease
+                longmove(@startY, @curY, NUM_LEGS)
+                longmove(@startZ, @curZ, NUM_LEGS)
+                gesturePhase := 0
+                gestureStage := GST_LEAN_OUT
+
+        GST_LEAN_OUT:                                        ' ease leaned stand -> neutral level stand, then finish
+            e := easeFactor(gesturePhase + 1, LEAN_FRAMES)
+            repeat idx from 0 to NUM_LEGS - 1
+                curX[idx] := lerpFix(startX[idx], 0, e)
+                curY[idx] := lerpFix(startY[idx], STAND_HEIGHT_MM + cal.stanceTrimY(idx), e)
+                curZ[idx] := lerpFix(startZ[idx], (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM, e)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= LEAN_FRAMES
+                finishGesture()
+
+PRI leanStandFoot(idx, freeLeg) : fx, fy, fz
+' General free-leg REBALANCE primitive: the leaned-stand foot target for leg `idx` when freeing
+' `freeLeg`. Leans the body toward the support triangle of the other three legs by translating the
+' body -- every foot shifts toward the freed leg's quadrant (foot delta = -body lean), so the CoG
+' moves AWAY from the freed leg and stays over the remaining tripod. Reuse for any single-leg move.
+' Magnitudes LEAN_FWD_MM / LEAN_LAT_MM are bench-tunable (flip LEAN_FWD_MM if +X is not "forward").
+'
+' @param idx - leg whose leaned foot target we want (0=FL 1=BL 2=FR 3=BR)
+' @param freeLeg - the leg being freed
+' @returns fx,fy,fz - leaned-stand foot target for leg idx
+    fx := ((freeLeg == 0) or (freeLeg == 2)) ? LEAN_FWD_MM : -LEAN_FWD_MM      ' free a FRONT leg -> feet forward
+    fy := STAND_HEIGHT_MM + cal.stanceTrimY(idx)
+    fz := ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + (((freeLeg == 2) or (freeLeg == 3)) ? -LEAN_LAT_MM : LEAN_LAT_MM)   ' free a RIGHT leg -> feet right (-Z)
 
 PRI finishGesture()
 ' End the current gesture and return to a neutral stand.
@@ -818,19 +878,40 @@ PRI headPanTo(panDeg)
         armMove(HEAD_FRAMES)
 
 PRI seedStand()
-' Power-on: snap ONCE to a deep crouch (the unavoidable first write -- to a LOW, low-stress pose, not
-' full attention), then arm an eased GLIDE up to the level stand so the dog RISES gently instead of
-' snapping to attention (lower peak current, and you can watch it). motionTask (launched right after)
-' runs the glide frames.
+' Power-on. The first servo write is unavoidable (hobby servos give no position feedback, so there
+' is no known start to ease FROM). So make that first contact the SAFEST one: slam ONCE to a low,
+' symmetric NEUTRAL stance (feet under the body, mid-range joints, away from the hard stops) -- not a
+' deep fold -- then ease gently DOWN into RELAX. The dog therefore powers up RESTING, not standing;
+' it stands only when commanded. (Center/neutral-seed soft-start; bench decision 2026-06-06.)
 
-    setLegTargets(0, CROUCH_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)   ' crouch foot targets
-    longmove(@curX, @tgtX, NUM_LEGS)                         ' cur := crouch (the one unavoidable power-on snap)
+    setLegTargets(RELAX_X_MM, RELAX_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)   ' tgt[] := RELAX (ramp end)
+    softSeedToRelax()                                        ' slam to neutral mid stance, then ease -> relax
+    longmove(@curX, @tgtX, NUM_LEGS)                         ' cur := relax (physically there now)
     longmove(@curY, @tgtY, NUM_LEGS)
     longmove(@curZ, @tgtZ, NUM_LEGS)
-    commitCur()                                              ' write the crouch once
     head.panTo(curHeadDeg)
-    setLevelStandTargets()                                   ' now aim at the level stand...
-    beginPoseMove(POWERON_FRAMES)                            ' ...and glide up to it (eased; motionTask runs it)
+    holdLegs()                                               ' tgt := cur (relax); nothing armed
+    moveComplete := TRUE
+    activeMode := MODE_RELAXED                               ' powers up RESTING -- STAND only on command
+    modeState := MODE_RELAXED
+
+PRI softSeedToRelax() | f, e, idx
+' Slam ONCE to a low symmetric NEUTRAL stance (the unavoidable power-on first contact, but mid-range
+' and feet-under-body -- low stress, away from the joint hard stops), then ease that neutral pose down
+' to the RELAX target now in tgt[]. Blocking: runs once at power-on, BEFORE the motion tasks launch.
+
+    repeat idx from 0 to NUM_LEGS - 1
+        startX[idx] := SEED_X_MM
+        startY[idx] := SEED_HEIGHT_MM
+        startZ[idx] := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM    ' 0,1 = left  2,3 = right
+    repeat f from 0 to SEED_FRAMES
+        e := easeFactor(f, SEED_FRAMES)
+        repeat idx from 0 to NUM_LEGS - 1
+            curX[idx] := lerpFix(startX[idx], tgtX[idx], e)
+            curY[idx] := lerpFix(startY[idx], tgtY[idx], e)
+            curZ[idx] := lerpFix(startZ[idx], tgtZ[idx], e)
+        commitCur()                                          ' f=0 (e=0) writes the neutral pose once: the slam
+        waitms(SEED_FRAME_MS)
 
 PRI beginPoseMove(frames)
 ' Arm an eased leg move toward the current targets; the head holds (target := current).
