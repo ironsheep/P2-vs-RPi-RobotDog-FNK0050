@@ -224,6 +224,9 @@ __marimo__/
 # for porting reference only; not part of this project's deliverables.
 REF/
 
+# Local reference work kept out of the repo by intent (e.g. the voice driver under test).
+DOCs/REF-NO-COMMMIT/
+
 # --- devcontainer ---
 .devcontainer/docker-compose.override.yml
 .devcontainer/*.zip

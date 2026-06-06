@@ -74,21 +74,19 @@ firmware in `src/` is under development.
 ## Possible future directions
 
 These are **candidate** directions for after the current port is fully bench-certified —
-**none is committed or in progress**, and the current firmware does not depend on any of
-them. They are recorded here so the intent is visible; the most likely next one is
-**speech recognition**.
+**none is committed or in progress**, and the current firmware does not depend on any of them.
+Each is an *input* that posts into the existing cog-0 command mailboxes, so the motion engine
+needs no change. **Full detail — hardware candidates, interfaces, and P2-integration notes — is in
+[`DOCs/FUTURE-DIRECTIONS.md`](DOCs/FUTURE-DIRECTIONS.md).**
 
-- **Speech recognition** *(most likely up next)* — let the dog take spoken commands
-  ("sit", "forward", "hello") instead of only scripted/mailbox commands. Would plug into
-  the existing cog-0 command path (post into mailbox A/B), so the motion engine and gait
-  catalog need no change.
-- **Vision recognition** — add a camera and on-/off-board inference so the dog can react
-  to what it sees (follow a target, detect obstacles, recognize markers). The biggest open
-  question is where the inference runs, given the P2's resources versus the Pi's old stack.
-- **Bluetooth radio for remote commanding** — a wireless command link to replace the
-  scripted demo orchestrator, driving the same mailbox command set from a phone or
-  gamepad. This is the natural first realization of the still-**TODO** "real comms cog 0"
-  command link the firmware already reserves a seat for.
+- **Speech recognition** *(short-term — next up)* — spoken commands ("sit", "shake", …) via a
+  recognition module (UART / I²C) feeding the command mailboxes.
+- **Pan/tilt head + vision AI camera** *(longer-term)* — replace the tilt-only head with a pan/tilt
+  mount + an I²C AI camera that reports what it sees (follow / look-at / find).
+- **P2 native audio output** *(longer-term)* — real barks / speech via the P2's smart-pin DAC/PWM,
+  beyond today's buzzer.
+- **Bluetooth remote commanding** *(longer-term)* — a wireless link (SPI / I²C) driving the same
+  mailbox command set; the first real "comms cog 0".
 
 ---
 
