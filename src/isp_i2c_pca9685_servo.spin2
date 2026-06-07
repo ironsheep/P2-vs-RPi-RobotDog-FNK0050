@@ -21,9 +21,9 @@ CON
     CALCULATE_CENTER = -1
     SERVO_POSITION_NOT_SET = -1
 
-    DEFAULT_LIMIT_USEC_MIN = 800    ' was 600 uSec
-    DEFAULT_LIMIT_USEC_CTR = 1500
-    DEFAULT_LIMIT_USEC_MAX = 2200   ' was 2400 uSec
+    DEFAULT_LIMIT_USEC_MIN = 500    ' 0 deg -- FULL servo range (matches Freenove Servo.py 102/512 counts @ 50Hz)
+    DEFAULT_LIMIT_USEC_CTR = 1500   ' 90 deg (center)
+    DEFAULT_LIMIT_USEC_MAX = 2500   ' 180 deg -- was 800..2200 (only ~126 deg of real travel); now full 0..180
 
     DEFAULT_SLEW_STEPS = 75
     DEFAULT_SLEW_RATE_IN_USEC = (DEFAULT_LIMIT_USEC_MAX - DEFAULT_LIMIT_USEC_MIN) / DEFAULT_SLEW_STEPS
