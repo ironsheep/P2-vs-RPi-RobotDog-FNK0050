@@ -161,10 +161,12 @@ PRI nextLeg()
     jntIdx := jntIdx // jointCount()
     showNameAndValue()
 
-PRI driveCur() | ch
+PRI driveCur() | ch, us
     ch := long[@chan][curIndex()]
     if ch >= 0
-        pca9685.gotoMicroSec(ch, CENTER_USEC + (trims[curIndex()] * USEC_SPAN) / DEG_SPAN)
+        us := CENTER_USEC + (trims[curIndex()] * USEC_SPAN) / DEG_SPAN
+        pca9685.gotoMicroSec(ch, us)
+        DEBUG("cal leg=", sdec_(legIdx), " jnt=", sdec_(jntIdx), " ch=", sdec_(ch), " trim=", sdec_(trims[curIndex()]), " -> ", sdec_(us), " us")
 
 PRI loadCalibration() | c, f, t
 ' Pre-load the committed per-joint trims from isp_calibration (the SAME set baked into the backend),

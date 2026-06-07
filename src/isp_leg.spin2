@@ -53,6 +53,14 @@ CON ' ---- per-leg PCA9685 channels (INFERRED from Freenove; verify) ----
 CON ' ---- joint geometry & IK ----
   SERVO_MIN_DEG    = 0
   SERVO_MAX_DEG    = 180
+  ' Per-joint DRIVABLE clamps (servo deg), measured on the bench 2026-06-07 (see joint-wiring-limits).
+  ' The servos drive ~10..170 deg; coxa is cut to 65 inward by the body, tibia to 20 by the housing.
+  COXA_SERVO_MIN   = 65
+  COXA_SERVO_MAX   = 170
+  FEMUR_SERVO_MIN  = 10
+  FEMUR_SERVO_MAX  = 170
+  TIBIA_SERVO_MIN  = 20
+  TIBIA_SERVO_MAX  = 170
   FEMUR_MIRROR_DEG = 90             ' Left: 90-b   Right: 90+b
   TIBIA_MIRROR_DEG = 180            ' Right: 180-c
   LINK1_COXA_MM    = 23             ' l1 (Freenove)
@@ -147,9 +155,9 @@ PUB setJointAngles(coxaDeg, femurDeg, tibiaDeg) | servoCoxa, servoFemur, servoTi
     servoFemur += calOffsetFemur
     servoTibia += calOffsetTibia
 
-    servoCoxa  := SERVO_MIN_DEG #> servoCoxa  <# SERVO_MAX_DEG  ' clamp, then record + drive (one source of truth)
-    servoFemur := SERVO_MIN_DEG #> servoFemur <# SERVO_MAX_DEG
-    servoTibia := SERVO_MIN_DEG #> servoTibia <# SERVO_MAX_DEG
+    servoCoxa  := COXA_SERVO_MIN  #> servoCoxa  <# COXA_SERVO_MAX   ' per-joint drivable clamp (measured 2026-06-07)
+    servoFemur := FEMUR_SERVO_MIN #> servoFemur <# FEMUR_SERVO_MAX
+    servoTibia := TIBIA_SERVO_MIN #> servoTibia <# TIBIA_SERVO_MAX
     lastCoxaServo  := servoCoxa                                ' publish for telemetry (getServoAngles)
     lastFemurServo := servoFemur
     lastTibiaServo := servoTibia
@@ -164,9 +172,9 @@ PUB driveServoDegrees(coxaDeg, femurDeg, tibiaDeg)
 ''
 '' @param coxaDeg/femurDeg/tibiaDeg - raw servo angles for shoulder/thigh/knee (0..180)
 
-    coxaDeg  := SERVO_MIN_DEG #> coxaDeg  <# SERVO_MAX_DEG
-    femurDeg := SERVO_MIN_DEG #> femurDeg <# SERVO_MAX_DEG
-    tibiaDeg := SERVO_MIN_DEG #> tibiaDeg <# SERVO_MAX_DEG
+    coxaDeg  := COXA_SERVO_MIN  #> coxaDeg  <# COXA_SERVO_MAX       ' per-joint drivable clamp (raw-servo poses too)
+    femurDeg := FEMUR_SERVO_MIN #> femurDeg <# FEMUR_SERVO_MAX
+    tibiaDeg := TIBIA_SERVO_MIN #> tibiaDeg <# TIBIA_SERVO_MAX
     lastCoxaServo  := coxaDeg
     lastFemurServo := femurDeg
     lastTibiaServo := tibiaDeg
