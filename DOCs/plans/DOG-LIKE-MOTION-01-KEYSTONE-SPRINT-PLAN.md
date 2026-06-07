@@ -27,6 +27,37 @@ lower/more-folded.** Index FL=0, BL=1, FR=2, BR=3; FRONT={0,2}, REAR={1,3}, LEFT
 `isp_leg.solveIKdegrees(fx,fy,fz):a,b,c` is a no-servo IK dry-run (IK-frame degrees, before
 the side mirror); per-joint drivable clamps coxa 65..170 / femur 10..170 / tibia 20..170.
 
+**Mechanical constraint (fixed spine — shapes the whole arc).** The robot has a rigid chassis:
+the shoulder and hip girdles are fixed relative to each other (`HALF_BODY_LENGTH_MM` is a
+**constant, not a state variable**) and there is **no spinal DOF** (13 servos = 12 leg joints +
+head pan). A real dog produces a loaded-rear crouch with leg fold *and* lumbar flexion; we
+synthesize **all** of it from leg geometry — foot (X,Y,Z) + joint angles are the only levers.
+Three consequences: **(1)** FRONT and REAR neutral are tuned **independently** — there is no
+coupling DOF between the girdles, so §1's front/rear decomposition is exactly the right model, not
+a shortcut. **(2)** The rear leg joints carry the spine's share of the fold, so they sit **closer
+to their clamps** than a dog's hindlimb — the §3 clamp-safety gate matters *more*, and the rear
+starting numbers are deliberately conservative. **(3)** Gallop spring, bound back-arch, and spinal
+stretch/extension (a true beg) are permanently out of reach and **out of scope for the entire
+Dog-Like Motion arc**, not just Step 1 — we approximate *static* posture and weight bias, never the
+spinal dynamics.
+
+**Testability note (host vs. hardware).** Two tiers exist. (1) **Container, no P2:** the
+only automated gate is the compile-all sweep (`pnut-ts` over `src/*.spin2`). (2) **Bare P2,
+no robot peripherals:** the `test_*.spin2` dry-run harnesses run headless over serial
+(`pnut-term-ts ... -b 2000000 --headless --end-marker "TEST_DONE"`) — *pure math, no
+servos / no I2C / no IMU / no actuator power* (`test_ik.spin2` is the existing example).
+§3 below expands tier 2 into a **self-checking** geometry harness so the new crouch's
+clamp-safety is proven in math before any servo strains on the bench. This honours
+[[production-path-testing]] — the harness exercises the **real** engine math, not a copy.
+
+**Entry prerequisites (sequenced before execution — not in this plan's scope).** Keystone
+executes only after **(a)** bench certification is **functional-green** on the P2 unit, and
+**(b)** the **non-singleton I2C cutover is complete** — keystone's new §3 harness and all
+object construction target the **new** driver. Rationale: don't stack an infra swap under a
+behaviour change (bisectability), and write the new geometry harness **once** against the
+final object/I2C-seeding pattern. Sequence: **baseline cert** (current singleton driver) →
+**I2C cutover** → **re-cert** (same control-panel sweep, diff the log) → **keystone execution**.
+
 ---
 
 ## 1. Single neutral source-of-truth: `neutralFootTarget(idx)` + crouch CONs
@@ -40,7 +71,10 @@ Z=±STANCE_LATERAL_MM. Redefining neutral in 8 spots is error-prone; it must bec
 **Current code.** `isp_robot_dog.spin2:73-76` geometry CON block; `setLevelStandTargets()`
 at 1195-1206.
 
-**Target.** Add four bench-tunable CONs (after `:76`) and two accessors (near `:1195`):
+**Target.** Add four bench-tunable CONs (after `:76`) and two accessors (near `:1195`). The
+accessors are **`PUB`** (not `PRI`) and **`start()`-independent** — they read CON + committed
+DAT (`cal.stanceTrimY`) only — so the §3 harness can call them without bringing up the
+backend. That start()-independence is a maintenance invariant; note it in the method comment.
 
 ```
 NEUTRAL_FRONT_Y_MM = 95    ' front a touch lower than 99 (elbow/shoulder flex)   -- bench-tune
@@ -48,13 +82,13 @@ NEUTRAL_REAR_Y_MM  = 85    ' rear folds deeper (the loaded hindquarter)         
 NEUTRAL_FRONT_X_MM = 0     ' front feet under the shoulders                       -- bench-tune
 NEUTRAL_REAR_X_MM  = -12   ' rear feet tucked toward tail (60:40 + femur~90°)     -- bench-tune
 
-PRI neutralFootTarget(idx) : fx, fy, fz | front
+PUB neutralFootTarget(idx) : fx, fy, fz | front
     front := (idx & 1) == 0                                   ' FRONT = FL(0), FR(2)
     fx := front ? NEUTRAL_FRONT_X_MM : NEUTRAL_REAR_X_MM
     fy := (front ? NEUTRAL_FRONT_Y_MM : NEUTRAL_REAR_Y_MM) + cal.stanceTrimY(idx)
     fz := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM
 
-PRI neutralFootY(idx) : fy                                    ' the per-leg planted floor
+PUB neutralFootY(idx) : fy                                    ' the per-leg planted floor
     fy := ((idx & 1) == 0) ? NEUTRAL_FRONT_Y_MM : NEUTRAL_REAR_Y_MM
     fy += cal.stanceTrimY(idx)
 ```
@@ -65,16 +99,23 @@ BOW-rear (1005-1006) and PARADE sub-poses, which are deliberate "stand tall," no
 **Starting-value reasoning (bench-tunable).** Smaller Y = more fold; rear ~14 mm lower than
 front gives a visibly loaded rear; a 12 mm rear tuck against the 136 mm half-body lever
 (`HALF_BODY_LENGTH_MM`) biases load forward without an extreme posture. Exact mm are bench
-knobs — the deliverable is the mechanism + sane, clamp-safe starting values + readback (§5).
+knobs — the deliverable is the mechanism + sane, clamp-safe starting values + readback (§3, §7).
+Because the spine is rigid (Engine facts above), the rear −X tuck and the rear-Y fold are
+**coupled through the body**: lowering the rear pitches the nose up (which *alone* shifts weight
+rearward), and the −X tuck is what restores the **60:40 *front* bias** — so the two are bench-tuned
+**as a pair**, watching pitch and bias together, not one knob at a time. (Terminology: "loaded
+rear" = the hindquarters *coiled/folded*; the 60:40 is the natural head-forward *static* front
+load — the two are not in tension.)
 
 **Integration.** Route `setLevelStandTargets()` (1204-1206) and `leadGaitNeutral()` (729-731,
 all of X/Y/Z) through `neutralFootTarget(idx)` — the rear now eases to `NEUTRAL_REAR_X_MM`,
 not literal 0.
 
 **Verification cases.** *Normal:* STAND `dumpState` shows front tgt(0,95,±10), rear
-tgt(−12,85,±10). *Edge:* `solveIKdegrees` on all four targets solves without degenerate
-guards and lands every servo angle inside the clamps, rear knee `c` tighter than front.
-*Error:* a clamp-pegged joint (raise `NEUTRAL_REAR_Y_MM` — less fold — rather than fight the clamp).
+tgt(−12,85,±10). *Edge:* §3 harness proves all four targets solve, every servo angle inside
+the clamps, rear knee `c` tighter than front. *Error:* a clamp-pegged joint (raise
+`NEUTRAL_REAR_Y_MM` — less fold — rather than fight the clamp). *Regression:* the stand-tall
+sub-poses SIT/BOW/PARADE still read off `STAND_HEIGHT_MM=99`, not the new neutral.
 
 ## 2. Per-leg gait planted-Y floor + dependent oscillators
 
@@ -106,7 +147,43 @@ eases to rear-tucked, first walking frame re-centres stride to X=0) shows **no v
 to X=0. *Error:* `guardReach()` (REACH_MIN 25 / MAX 130) never trips — deeper crouch shortens
 reach (moves away from MAX); confirm the rear −X foot stays above REACH_MIN.
 
-## 3. Zero the stale leveling trim + re-measure flow
+## 3. Host-side dry-run testability — `solveServoDegrees` + self-checking harness
+
+**Why.** The new crouch must be proven **clamp-safe without moving servos**. Today the
+mirror+trim+clamp lives inside `setJointAngles()` (`isp_leg.spin2:134-169`), which *writes
+hardware in the same method* — so the full foot-XYZ→servo-angle pipeline cannot run on a
+bare P2. `test_ik.spin2` only prints raw IK-frame angles. This section closes that gap and
+turns the dry-run into a self-asserting test.
+
+**Current code.** `setJointAngles()` fuses mirror/trim/clamp + servo writes (147-169);
+`solveIKdegrees()` is the pure IK (no mirror); `test_ik.spin2` is the existing pure-math harness.
+
+**Target.**
+- **Extract** `PRI ikToServo(coxaIK, femurIK, tibiaIK) : cS, fS, tS` in `isp_leg` — the
+  mirror + trim + clamp math, **no writes** — and refactor `setJointAngles()` to call it then
+  write (behaviour-preserving, DRY).
+- **Add** `PUB solveServoDegrees(footX, footY, footZ) : cS, fS, tS` = `solveIKdegrees` +
+  `ikToServo`, **no hardware writes** — the whole pipeline as a pure function.
+- **New harness `src/test_keystone_geometry.spin2`** (pure math, no servos/I2C/IMU/power).
+  For each leg idx 0..3: read the **real** `dog.neutralFootTarget(idx)` (object instantiated
+  *without* `start()`), run `leg.solveServoDegrees(x,y,z)` for that leg's side, print foot
+  XYZ + IK `a/b/c` + servo `c/f/t`, and **self-assert PASS/FAIL**:
+  - every servo angle strictly *inside* its clamp (not pegged) — clamp-safety gate,
+  - rear knee more flexed than front (the loaded-crouch conformation),
+  - rear-X load shift present (rear X < front X).
+  Also dump `neutralFootY(idx)` at a few gait phase points (the per-leg planted floor).
+  End with a single `PASS`/`FAIL` summary + `TEST_DONE` end-marker (headless convention,
+  [[headless-debug-baud]]).
+- **Update `test_ik.spin2`** to point its `showIK` calls at the four new neutral targets and
+  correct its "Expected neutral [0,99,10] … a~84 b~-46 c~92" header comment.
+
+**Verification cases.** *Normal:* harness prints `PASS` for all four legs on a bare P2.
+*Edge:* a too-deep starting `NEUTRAL_REAR_Y_MM` makes a joint peg → harness prints `FAIL`
+with the offending joint, caught in math (no servo strain). *Error:* `solveServoDegrees`
+output equals the live `getServoAngles()` after a real `moveToXYZ` to the same target —
+confirms the pure path and the production path agree.
+
+## 4. Zero the stale leveling trim + re-measure flow
 
 **Why.** `stancePitchDeg=-3`, `stanceRollDeg=+2` (`isp_calibration.spin2:88-93`) were measured
 against the old square stance + old servo map → invalid for the new geometry.
@@ -126,31 +203,60 @@ un-leveled tilt." *Edge:* the intended nose-up pitch appears in the first measur
 expected, not a defect. *Error:* roll should be near-symmetric; a large unexpected roll means a
 per-leg trim/servo regression to chase before pasting.
 
-## 4. Specification update (changed behavior)
+## 5. Documentation backport (all code-state docs that describe the stance/motion model)
 
-**Why.** `DOCs/spec/P2-RobotDog-Specifications.md` §2.2 "Verified neutral stance" (lines 72-75)
-documents the square X=0/Y=99 stance; line 86 ("foot lift clamped to `Y ≤ STAND_HEIGHT_MM`")
-and the CON table (line 223) reference it. The keystone changes this behavior, so the spec is a
-deliverable.
+**Why.** Several documents describe the neutral stance / gait-Y model as it stands today; the
+keystone changes that behaviour, so keeping them current is a sprint deliverable, not an
+afterthought.
 
-**Target.** Update §2.2 to describe the loaded-rear-crouch neutral (front/rear split Y, rear −X
-load shift, the `neutralFootTarget` source-of-truth), correct the foot-lift-clamp wording to the
-**per-leg** floor, and add the four `NEUTRAL_*` CONs to the CON table. Note the 60:40 bias and
-the bench pitch decision.
+**Target — update each to the loaded-rear-crouch / per-leg-floor / `neutralFootTarget` model:**
+- **`DOCs/spec/P2-RobotDog-Specifications.md`** — §2.2 "Verified neutral stance" (72-75),
+  the foot-lift-clamp wording (86, now *per-leg* floor), and the CON table (223): add the
+  four `NEUTRAL_*` CONs, note the 60:40 bias and the bench pitch decision.
+- **`DOCs/P2_FIRMWARE_THEORY_OF_OPS.md`** — the gait `Y=6·sin(phase)+height` + foot-lift-clamp
+  description (≈284) and the "ease/hold neutral stance" narrative (≈218-227): describe the
+  per-leg planted floor and the single `neutralFootTarget` source-of-truth.
+- **`src/README.md`** — the firmware-architecture doc the ToO defers to (§3); backport the
+  neutral-stance + gait-floor description.
+- **`DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`** — (a) the cited committed
+  trim `-3/+2` (163-164, 180) goes stale → note it is being re-measured (final values land at
+  closeout); (b) add a **Keystone loaded-crouch** exercise housing the §7 bench steps + the §3
+  host dry-run gate. (Authored via the `test-playbook` skill at execution.)
+- **In-code doc comments** — `test_ik.spin2` header expected-values (done in §3) and any
+  `isp_robot_dog` neutral-related method doc-comments.
 
-**Verification.** Spec §2.2 matches the shipped CONs and accessor; no remaining reference to a
+*Intentionally NOT backported:* `DOCs/DOG-LIKE-MOTION-STUDY.md` — it is the rationale/source,
+not a code-state-of-record (its §6 step-1 is marked done at sprint closeout, not here).
+
+**Verification.** Each doc matches the shipped CONs/accessor; no remaining reference to a
 single `STAND_HEIGHT_MM` neutral floor for gaits.
 
-## 5. Verification playbook (bench — the real gate)
+## 6. Coding-style audit (gate on every modified object)
+
+**Why.** All code modifications are audited against project style. There is no separate Spin2
+style *doc*; the authority is established in-code idiom + p2kb-mcp + a review pass.
+
+**Target.** New CONs, accessors, `ikToServo`/`solveServoDegrees`, and the harness must match
+the surrounding idiom: `''` public / `'` internal doc comments with `@param`/`@local`/
+`@returns`, `{Spin2_Doc_CON}` markers, `ALL_CAPS_MM` CON naming, camelCase methods, the
+existing clamp/`#>`/`<#` style. Use **p2kb-mcp** (`p2kb_get`) for any unfamiliar Spin2/PASM2
+construct rather than guessing (per CLAUDE.md). Run a **`/code-review` pass on the final
+diff** as the gate before the build is considered done.
+
+**Verification.** `/code-review` returns no style/correctness findings on the diff; doc-comment
+blocks present on every new `PUB`/`PRI`.
+
+## 7. Verification playbook (bench — the real gate)
 
 The automated gate is the **compile-all sweep** (`pnut-ts` over `src/*.spin2`). Real
 verification is on the P2 bench unit:
 
-1. **IK dry-run (no hardware)** — `test_ik.spin2` pointed at the four neutral targets: all
-   solve, servo angles inside clamps, **rear `c` tighter than front**. Gate before any servo moves.
+1. **Host dry-run (no robot)** — `test_keystone_geometry.spin2` (§3) + `test_ik.spin2`:
+   `PASS` for all four legs, servo angles inside clamps, rear `c` tighter than front. *Gate
+   before any servo moves.*
 2. **Static stand + readback** — `test_dog_stand.spin2`: STAND dump shows the new targets, no
    clamp pegging, dog visibly stands in a loaded rear crouch; CROUCH/RELAX/SIT still complete.
-3. **Leveling re-measure** — `test_dog_level.spin2` with trims zeroed (§3); apply the bench
+3. **Leveling re-measure** — `test_dog_level.spin2` with trims zeroed (§4); apply the bench
    pitch decision.
 4. **Gaits** — `test_dog_gaits.spin2`: FWD/BACK/TURN L-R/STEP L-R show per-leg floors, X=0
    stride, no lead-in→walk hitch, STOP returns to new neutral.
@@ -163,18 +269,24 @@ returns to the **new** loaded crouch (not the old square stance).
 
 ## Files
 
-- `src/isp_robot_dog.spin2` — CONs, two accessors, stand/lead-in/gait/pushup/HELLO routing (§1, §2)
-- `src/isp_calibration.spin2` — zero stale stancePitch/Roll (§3)
-- `src/isp_leg.spin2` — read-only (`solveIKdegrees` reused; no edit)
-- `DOCs/spec/P2-RobotDog-Specifications.md` — §2.2 + CON table (§4)
-- `src/test_ik.spin2`, `test_dog_stand.spin2`, `test_dog_level.spin2`, `test_dog_gaits.spin2`
-  — verification harnesses (§5); optional `test_ik` dry-run edit
+- `src/isp_robot_dog.spin2` — CONs, two PUB accessors, stand/lead-in/gait/pushup/HELLO routing (§1, §2)
+- `src/isp_leg.spin2` — `ikToServo` extraction + `solveServoDegrees` (§3); `setJointAngles` refactor
+- `src/isp_calibration.spin2` — zero stale stancePitch/Roll (§4)
+- `src/test_keystone_geometry.spin2` — **new** self-checking host dry-run harness (§3)
+- `src/test_ik.spin2` — retarget to new neutral + fix header (§3)
+- `DOCs/spec/P2-RobotDog-Specifications.md`, `DOCs/P2_FIRMWARE_THEORY_OF_OPS.md`,
+  `src/README.md`, `DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md` — doc backport (§5)
+- Bench harnesses `test_dog_stand/level/gaits.spin2` — verification (§7)
+
+## Process notes (not silently skipped)
+- **Version bump** (`src/isp_version.spin2`, currently 0.1.1) is set by `sprint-start`.
+- **Release notes** (`DOCs/RELEASE-NOTES.md`) are authored by `build-wrapup` at closeout.
 
 ## Open decisions (carried to the bench, not blocking)
 
 - **Pitch intent** — keep the loaded nose-up posture (pitch trim ~0) vs. flatten to IMU-level.
-  Decided when Stephen can see it on hardware (§3).
+  Decided when Stephen can see it on hardware (§4).
 - **Exact crouch magnitudes** — the four `NEUTRAL_*` CONs are starting values; tuned from the
-  bench readback (§1, §5).
+  §3 readback (§1, §7).
 
 _No open questions block this plan — code research is complete and the questions pass is empty._
