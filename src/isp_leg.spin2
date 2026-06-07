@@ -157,6 +157,23 @@ PUB setJointAngles(coxaDeg, femurDeg, tibiaDeg) | servoCoxa, servoFemur, servoTi
     femurServo.writePosition(femurServo.M_ANGLE, servoFemur)
     tibiaServo.writePosition(tibiaServo.M_ANGLE, servoTibia)
 
+PUB driveServoDegrees(coxaDeg, femurDeg, tibiaDeg)
+'' Drive the three servos to RAW servo angles (degrees 0..180), with NO side-mirror and NO calibration
+'' trim -- so a hand-dialed pose (e.g. the Cal-tool salute position) reproduces exactly. Uses the same
+'' 0..180 -> 800..2200 us mapping the Cal tool uses. Clamps and records for telemetry.
+''
+'' @param coxaDeg/femurDeg/tibiaDeg - raw servo angles for shoulder/thigh/knee (0..180)
+
+    coxaDeg  := SERVO_MIN_DEG #> coxaDeg  <# SERVO_MAX_DEG
+    femurDeg := SERVO_MIN_DEG #> femurDeg <# SERVO_MAX_DEG
+    tibiaDeg := SERVO_MIN_DEG #> tibiaDeg <# SERVO_MAX_DEG
+    lastCoxaServo  := coxaDeg
+    lastFemurServo := femurDeg
+    lastTibiaServo := tibiaDeg
+    coxaServo.writePosition(coxaServo.M_ANGLE,  coxaDeg)
+    femurServo.writePosition(femurServo.M_ANGLE, femurDeg)
+    tibiaServo.writePosition(tibiaServo.M_ANGLE, tibiaDeg)
+
 PUB getServoAngles() : coxaDeg, femurDeg, tibiaDeg
 '' Return the servo angles last written for this leg (degrees, after mirror + trim + clamp). Reads
 '' per-instance hub state only -- safe to call from another cog for telemetry/diagnostics.
