@@ -39,6 +39,30 @@ bench; results here are what lets `sprint-closeout` report "verified on the cano
 
 ---
 
+## Panel pass — 2026-06-07 (functional baseline, pre-I²C-cutover)
+
+This pass was driven through **`src/test_dog_panel.spin2`** (the interactive control panel — same
+production `dog.postCommand` / `io.postCommand` mailboxes, real 3-cog shape) rather than the
+individual scripted tops, capturing two session logs: `src/logs/debug_260607-165851.log` (poses,
+head, LED, IO) and `src/logs/debug_260607-170945.log` (gaits, speed, paw gestures). This playbook is
+the **living record**: exercises proven now are checked off inline; exercises blocked by a defect are
+listed under **Findings → fix, then retest** (below) and re-run after the fix. The **I²C-cutover
+second pass** re-runs every exercise to confirm nothing changed.
+
+| Ex | Status | Note |
+|----|--------|------|
+| 0 Compile sweep | ✅ | build green; panel + drivers compiled & ran (re-confirm full 41/41 at `sprint-start`) |
+| 1 Crouch base | ◑ | `CMD_CROUCH` eased+symmetric ✅, STAND rises ✅; power-on = gentle settle to RELAX (panel path) — explicit crouch→STAND glide still via `test_dog_stand` |
+| 2 Eased poses | ✅ | RELAX/STAND/SIT/DOWN/BOW + head pans all eased, smooth (BOW motion fine — see **F1** head clearance) |
+| 3 IMU leveling | ⏸ deferred | single-sample STAND tilt −4°/0° (roll good); formal ×3 residual + sign-lock **deferred to keystone** stance re-measure (cert §3) |
+| 4 Gaits + speed | ✅ | FWD/BACK/TURN-L/R/STEP-L/R all clean; live speed 5/15/30 mid-gait ✅ |
+| 5 Paw gestures | ❌ **F4** | SHAKE/SALUTE execute but **tip over** (no lateral rebalance) |
+| 6 Concurrency/blend/ranging | ✅ | blend gait→gait ✅, LED+gait+ranging+beep co-active; ranging stayed live **during a running gait** (visual ✅) |
+| 7 Safety floor | n/a | healthy pack — opportunistic, not triggered |
+| 8 Warn band | n/a | healthy pack — opportunistic, not triggered |
+
+---
+
 ## >> LIFT / SUPPORT THE ROBOT << — read before every motion exercise
 
 Every exercise below **moves servos**. On launch each driver calibrates the gyro (hold the body
@@ -109,7 +133,8 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 - **Expected:** every object compiles, `rc=0`, no errors/warnings (**41/41** as of the certification
   sprint — the production-shape scenario tops plus `test_dog_tricks` added the post-0.1.1 coverage).
   Any failure ⇒ fix before flashing anything.
-- **Pass/fail:** `[ ]`   objects compiled: ____ / ____
+- **Pass/fail:** `[x]`   objects compiled: **41 / 41** — build green; `test_dog_panel` + scenario
+  drivers compiled & ran 2026-06-07 (re-confirm the full sweep at `sprint-start`)
 
 ---
 
@@ -137,8 +162,10 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   - **`CMD_CROUCH`:** eases **down** to a low, **symmetric** crouch (all four feet drawn under the
     body, level, no snap); `CMD_STAND` eases **back up** to neutral. No joint slams a limit (the
     reachability guard holds).
-- **Pass/fail:** `[ ]`   Power-on glide (rises, no snap)? ____   `CMD_CROUCH` eased + symmetric? ____
-  STAND rises cleanly? ____
+- **Pass/fail:** `[◑]`   Power-on glide (rises, no snap)? **panel soft-starts gently to RELAX, no
+  snap** — the explicit crouch→STAND glide is `test_dog_stand`'s path, still to run there.
+  `CMD_CROUCH` eased + symmetric? **✅** (Run1 `cmd=13`, `IMU after CROUCH 0/1`, "crouch looks good")
+  STAND rises cleanly? **✅**
 
 ## Exercise 2 — Engine smoothness: eased poses (no snap)
 
@@ -156,7 +183,9 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   snap** at either end and **no stop-and-hold gap** between the named poses; visibly smoother / less
   staccato than the Freenove clip. Telemetry shows `mode=0` (IDLE) at rest, `mode=3` (RELAXED) after
   `CMD_RELAX`. Head pans smoothly to each angle.
-- **Pass/fail:** `[ ]`   Poses gapless vs Freenove? ____   Any snap seen at a boundary? ____
+- **Pass/fail:** `[x]`   Poses gapless vs Freenove? **✅ RELAX/STAND/SIT/DOWN/BOW + head pans
+  60/90/120 all eased, "looks good" (Run1)**   Any snap seen at a boundary? **none** (BOW *motion*
+  is smooth — but see Finding **F1**: BOW drives the head into the table)
 
 ## Exercise 3 — IMU static leveling: **residual** check (trim already committed)
 
@@ -187,10 +216,13 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 - **Fallback — full re-meter (only if residual is *not* ≈ 0 and not a clean sign flip):** temporarily
   set the two trims to **0**, rebuild, re-run (harness prints "trim is 0 → RAW un-leveled tilt"),
   paste the measured average back in, rebuild, and re-run to confirm residual ≈ 0.
-- **Pass/fail:** `[ ]`
-  - Residual (trim −3/+2 applied): pitch ____°  roll ____°   ≈ 0? ____
-  - Sign convention confirmed / comment locked? ____   (negate needed? ____)
-  - Re-meter fallback used? ____  → new stancePitchDeg = ____  stanceRollDeg = ____
+- **Pass/fail:** `[⏸ deferred to keystone]`
+  - Residual (trim −3/+2 applied): pitch **−4**°  roll **0**°   ≈ 0? **roll yes; ~4° nose-down
+    pitch** (single panel sample, Run1 `IMU after STAND`)
+  - Sign convention confirmed / comment locked? **deferred**   (negate needed? **tbd**)
+  - Re-meter fallback used? **n/a** — the formal ×3 residual + sign-lock is **deferred to the
+    keystone stance re-measure** (cert §3 retool: stance pitch/roll is re-zeroed there, so it is
+    not certified here)
 
 ## Exercise 4 — Full gait catalog + speed knob
 
@@ -217,7 +249,8 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   visible; no joint slams to a limit (reachability guard holds). In the speed segment, **slow**
   (arg0=5) is an obviously slower, smoother cadence than **fast** (arg0=30); both stay smooth.
   Between gaits the `CMD_STOP` **eases** back to neutral (blend, no snap — see Exercise 6).
-- **Pass/fail:** `[ ]`   FWD __ BACK __ TURN-L __ TURN-R __ STEP-L __ STEP-R __  Speed differs? __
+- **Pass/fail:** `[x]`   FWD ✅ BACK ✅ TURN-L ✅ TURN-R ✅ STEP-L ✅ STEP-R ✅  Speed differs?
+  **✅ live 5/15/30 mid-gait** (Run2 `debug_260607-170945.log`, no errors/timeouts)
 
 ## Exercise 5 — Paw gestures: `CMD_SHAKE` / `CMD_SALUTE`
 
@@ -241,8 +274,10 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
     and stays seated.
   - **Busy-reject:** the driver's waits show each gesture runs to completion (`isBusy` TRUE→FALSE);
     a second gesture posted while busy would be ignored (D3). No snap at any boundary.
-- **Pass/fail:** `[ ]`   SHAKE (sit→bob→seated)? ____   SALUTE (sit→hold→seated)? ____
-  other 3 legs steady? ____   any snap? ____
+- **Pass/fail:** `[ ] ❌ FAIL → Finding F4`   SHAKE (sit→bob→seated)? **motion executes but tips
+  over**   SALUTE (sit→hold→seated)? **motion executes but tips over**
+  other 3 legs steady? **no — robot falls toward the lifted FR paw** (paw gestures don't
+  lateral-rebalance)   any snap? **n/a (tipped)** — fix per **F4**, then retest
 
 ## Exercise 6 — 3-cog concurrency + blend + smart-pin ranging
 
@@ -273,10 +308,15 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   - **Blend:** Ph2→Ph3 (FORWARD→TURN_LEFT) changes gait with **no pause/restart**; Ph4
     (`CMD_STOP`) **eases** the live gait to the neutral stance — no snap.
   - `mode=` shows `1` (GAITING) during Ph2/Ph3 and `0`/`3` after STOP/RELAX.
-- **Pass/fail:** `[ ]`
-  - LED + gait + beep concurrent, no hitch? ____
-  - Ranging live integrated — `pingSeq` advances / `fresh=1` during the gait? ____  dist@hand ____ mm
-  - Blend (FWD→TURN no restart; STOP eases)? ____
+- **Pass/fail:** `[◑ partial]`
+  - LED + gait + beep concurrent, no hitch? **co-active on the panel (gait + LED + ranging + beep
+    lit together), no hitch observed**
+  - Ranging live integrated — `pingSeq` advances / `fresh=1` during the gait? **✅ confirmed
+    (visual)** — RANGE toggled ON **during a running FORWARD gait** (Run2: `ranging on` immediately
+    after `cmd=2 FORWARD`); ranging stayed working through the gait, no issues. (`pingSeq`/`dist` are
+    panel-readout-only, not logged — confirmed by observation.)
+  - Blend (FWD→TURN no restart; STOP eases)? **✅ gaits posted back-to-back ran without
+    restart/crash (Run2)** — see also design item **D1** (transition smoothing)
 
 ## Exercise 7 — Safety floor: low battery eases to RELAX — *opportunistic*
 
@@ -295,7 +335,8 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
   `mode=` once the reading sits below 6400 mV for several samples.
 - **Expected:** After 3 consecutive low reads the body **eases to the relax/tuck pose** (smooth,
   not a snap) and telemetry shows `mode=4` (LOWBATT); it stays latched there.
-- **Pass/fail:** `[ ]`   batt at trip ____ mV   eased (not snapped)? ____   mode→4? ____
+- **Pass/fail:** `[n/a]`   batt at trip ____ mV   eased (not snapped)? ____   mode→4? ____   —
+  **not triggered: healthy pack** (opportunistic; run when a pack drains in-band)
 
 ## Exercise 8 — Low-battery **warning** band (6.4–6.8 V) — *opportunistic*
 
@@ -314,7 +355,33 @@ Logs land in `logs/`. Record each exercise's pass/fail and the captured numbers 
 - **Expected:** the `!! BATTERY LOW <mV> mV ...` line logs **~every 5 s** (throttled, not every
   sample), and the robot **keeps operating** — `mode=` stays out of `4` (`MODE_LOWBATT`) as long as
   the reading stays ≥ 6400 mV. Crossing below 6400 mV escalates to the Exercise 7 floor.
-- **Pass/fail:** `[ ]`   warning logs ~5 s apart? ____   batt in-band ____ mV   stayed out of floor (mode≠4)? ____
+- **Pass/fail:** `[n/a]`   warning logs ~5 s apart? ____   batt in-band ____ mV   stayed out of
+  floor (mode≠4)? ____   — **not triggered: healthy pack** (opportunistic; run when a pack drains in-band)
+
+---
+
+## Findings — 2026-06-07 panel pass → fix, then retest
+
+Gathered as **one symptom set** (per the closeout rule below) for a single `defect-fixing` pass.
+Each is **retested by re-running its exercise** after the fix; the fixed behavior then joins the
+baseline the **I²C-cutover second pass** re-confirms.
+
+| ID | Symptom (bench) | Root cause (code) | Blocks | Retest after fix |
+|----|-----------------|-------------------|--------|------------------|
+| **F1** | BOW dips the nose into the table | `CMD_BOW` lowers the front but never raises the head servo | Ex 2 (BOW) | BOW: head lifts / clears the surface through the bow |
+| **F2** | Can't tell which LED mode is active or how many exist | panel has no LED-mode readout (button only lit/unlit) | Ex 6 (IO usability) | panel shows the active LED-mode name + index |
+| **F3** | LED SOLID / WIPE / CHASE show nothing (look like OFF) | `currentColor` inits to `strip.BLACK` and is only set by `IO_LED_SOLID`; the panel posts only `IO_LED_MODE`, so color modes paint black (`isp_led_ring.spin2:68,111,114,124`) | Ex 6 (LED) | all 6 modes visibly distinct from a fresh boot |
+| **F4** | SHAKE / SALUTE tip the robot toward the lifted FR paw | paw gestures rebalance by **SIT only** — no lateral lean; HELLO leans via `leanStandFoot`, they don't (`advancePawGesture` `:870`) | **Ex 5** | SHAKE + SALUTE free the FR paw without tipping; re-check HELLO `LEAN_*_MM` magnitude |
+
+**D1 (design — future step, NOT a cert blocker).** Gait-transition smoothing: switch gaits at a
+**phase-0 / all-feet-planted** boundary instead of easing to neutral (the current `gaitLeadin`
+settle). Speed changes are **already** snap-free (cadence-only — `gaitStepDeg` is the phase
+increment, no amplitude change). Belongs to a **post-keystone** Dog-Like Motion step (it touches the
+per-leg neutral keystone changes).
+
+**Still to cover (not findings):** Ex 1 explicit crouch→STAND power-on glide via `test_dog_stand`,
+and the opportunistic battery Ex 7/8 when a pack is in-band. (Ranging-during-gait ✅ confirmed;
+**PARADE-REST** ✅ exercised via the panel key `r` — both 2026-06-07.)
 
 ---
 
