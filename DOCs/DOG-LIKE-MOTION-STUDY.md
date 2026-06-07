@@ -141,16 +141,28 @@ sinusoid because that's what fit; **we can afford to move like a dog.**
 
 ---
 
-## 6. Suggested order of work
+## 6. Committed order of work
 
-1. **Keystone:** angulate the neutral stance (re-tune `STAND_HEIGHT` / per-leg targets to a loaded rear
-   crouch). *Verify it didn't break the gaits/poses that ride on it.*
-2. **Coxa-in-gait + asymmetric swing + trot bob** (the three biggest "alive" levers), one at a time.
-3. **A true walk** with weave + head-bob.
-4. **Pose polish** (asymmetry, idle micro-motion) + the **sleep/stretch/sploot** poses.
-5. **Coxa-showcase behaviors** (shake-off, rear-wiggle, scratch).
-6. **Tail + head-pan** when ready (spare channels) → real wag + head expression.
-7. (Later, per Future Directions §5) **active IMU balance** on top.
+**Principle:** *interleave* — every step ends with something visibly different on the bench, alternating
+a depth/mechanics step with a visible-payoff step, rather than grinding all the mechanics first and
+landing every visible/fun result last. The only hard sequencing: the **keystone comes first** (every
+pose and gait rides on the neutral stance), and **coxa activation in the engine (step 3)** must precede
+the trunk roll (5) and the coxa-showcase behaviors (6). The one item that genuinely lands later —
+**tail + head-pan (9)** — is gated only because it needs servos wired onto the spare channels; everything
+before it is firmware-only on the hardware already on the bench.
+
+| # | Step | Bench-visible payoff | Type |
+|---|------|----------------------|------|
+| 1 | **★ Keystone — angulate the neutral stance** (loaded rear crouch, ~30° stifle/hock, 60:40 bias). Also re-measure the stale `stancePitch/Roll` leveling trim on the recalibrated geometry here. *Verify gaits/poses that ride on it still work.* | Square robot-stance → natural loaded crouch | foundation **+ visible** |
+| 2 | **Idle life** — pose asymmetry (a consistent "personality" offset) + breathing micro-motion at rest | Dog stops looking frozen while standing | **fun/visible** |
+| 3 | **Coxa-in-gait + asymmetric retracting swing** (trot), one lever at a time | Walk stops looking robotic — the big one | mechanics **+ visible** |
+| 4 | **New pose: sploot** (then sleep, head-on-paws) | Crowd-pleaser, built on the new angulation | **fun** |
+| 5 | **Trunk bob/roll** on the trot | Body comes alive, not a rigid plank gliding | mechanics **+ visible** |
+| 6 | **Coxa-showcase behavior: shake-off** (then wag / rear-wiggle / scratch) | Shows off the now-active coxa | **fun/showcase** |
+| 7 | **True walk gait** (lateral-sequence LH-LF-RH-RF) with weave + head-bob | A second, distinct gait to switch between | mechanics **+ visible** |
+| 8 | **Pose polish** — stretch + refined sit/bow/sleep | Cleaner, more dog-like catalog | visible |
+| 9 | **Tail + head-pan** on spare PCA9685 channels (0/1/14) | Biggest expressiveness win — needs wiring | **fun**, hardware-gated |
+| 10 | *(later, per Future Directions §5)* **active IMU balance** | Robustness on uneven ground — not very visible | last by nature |
 
 ---
 
