@@ -5,8 +5,9 @@
 ![Maintainer](https://img.shields.io/badge/maintainer-stephen%40ironsheep.biz-blue?labelColor=black)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-Images referenced by the project [`README`](../../README.md), the Freenove kit
-[`README`](../README.md), and the [`HARDWARE_SETUP`](../P2-platform/HARDWARE_SETUP.md) build guide.
+Images referenced by the project [`README`](../../README.md), the [`DOCs` hub](../README.md),
+and the [`HARDWARE_SETUP`](../P2-platform/HARDWARE_SETUP.md) build guide. The kit icon and
+PCB-version photos are Freenove-sourced (see the [`DOCs` hub](../README.md#upstream--external-reference-material--freenove-fnk0050)).
 
 ### Kit / board reference
 
