@@ -95,6 +95,26 @@ takes ~3–4 dedicated pins. Either way it posts the same `CMD_*` set into the m
 
 ---
 
+## 5. Active IMU balance (closed-loop) — *longer-term, after the motion studies*
+
+**What.** Use the MPU6050 **during** motion, not just at rest — so the dog can **react to disturbances
+in real time**: if it steps onto something while walking, or starts drifting out of balance, it adjusts
+foot placement / shifts its center of gravity, or **stops/freezes to avoid tipping**.
+
+**Where we are.** Today the IMU is used only for **static leveling** (measure the neutral-stand tilt
+once → per-leg foot-Y trim; firmware spec §5). The attitude is read continuously but does **not** correct
+motion in flight — the gaits are open-loop.
+
+**Why it's sequenced after the dog-movement work.** Closed-loop balance is a robustness *layer* on top of
+the open-loop trajectories — there's no point stabilizing motion that isn't yet shaped the way we want.
+First get the gaits/poses **dog-like** (the motion studies); then add the IMU feedback that keeps them
+upright on uneven ground. No hardware needed (the MPU6050 is already on the bus) — this is firmware.
+
+**Open questions.** Detection thresholds (what tilt rate = "losing it"); reaction policy (correct vs.
+freeze); how to fold a correction into the fixed-rate eased engine without fighting the gait trajectory.
+
+---
+
 ## Hardware candidates at a glance
 
 | Direction | Device | Interface | Status |

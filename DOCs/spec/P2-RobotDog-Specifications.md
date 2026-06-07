@@ -233,6 +233,54 @@ eased pose path — no snap.
 
 ---
 
+## 8. Leg kinematics, servo characteristics & limits
+
+Each leg is a **3-link chain** driven by three servos; the head is a single tilt servo. The leg servos
+are **unmarked metal-gear micro servos (MG90S-class)**; the head is an **SG90** (plastic gear). **No
+datasheet exists for the leg units — every value below was measured on the bench (2026-06-07)** and is
+authoritative for these specific servos.
+
+### 8.1 Servo µs ↔ angle
+
+`0–180° = 500–2500 µs`, center `90° = 1500 µs` (matches Freenove `Servo.py`, counts 102/512 @ 50 Hz;
+**corrected 2026-06 from a too-narrow 800–2200 µs that reached only ~126°** of travel). **Usable
+drivable range ≈ ±80° from center (servo ~10–170°).** Past that the servo just stops responding — a
+*pulse edge*, **no mechanical stop, no stall noise**; the gears free-spin further by hand with power off
+(~190°/~340°), but that range is blind to the electronics and not commandable.
+
+### 8.2 Leg geometry & axes
+
+| Joint | Link | Length | Axis | Center (90°) | Moves the foot |
+|---|---|---|---|---|---|
+| Coxa (shoulder) | L1 | 23 mm | horizontal, **fore-aft** (along body) | down-and-out | **lateral ↔ vertical** (in / out / up) |
+| Femur (thigh) | L2 | 55 mm | horizontal, **across** (lateral) | straight down | **fore ↔ aft** (stride) + extension |
+| Tibia (knee→foot) | L3 | 55 mm | horizontal, **across** (lateral) | foot flat, toes-forward | extension / reach |
+
+The coxa sets the leg's lateral-vertical *plane*; the femur and tibia move the foot fore-aft and in-out
+*within* it (`footX` from the femur, `footZ/footY` from the coxa). All-servos-centered = femur vertical
++ foot flat = the natural low-torque "parade rest" pose.
+
+### 8.3 Per-joint drivable clamps (enforced in `isp_leg`)
+
+Both `setJointAngles` and `driveServoDegrees` clamp each joint to its measured drivable range, replacing
+the old blanket 0–180°:
+
+| Joint | Servo° clamp | Inward limit set by |
+|---|---|---|
+| Coxa | **65–170°** | the **body** (leg swings into it) |
+| Femur | **10–170°** | none — full servo sweep |
+| Tibia | **20–170°** | the **housing** (foot contacts ~15°) |
+
+### 8.4 Calibration
+
+Per-joint mounting offsets are stored as `legTrim` (+ `HEAD_TRIM_DEG`) in `isp_calibration`, applied at
+leg init and added inside `setJointAngles`. They are found with the `test_cal_full` Cal tool (dial each
+joint, `p` to dump, paste into `isp_calibration`); re-metered 2026-06 under the corrected 500–2500 µs
+mapping. The tool starts **centered** (trims = 0) for from-scratch calibration; **`k`** loads the
+committed values to dial poses relative to true neutral; **`C`** re-centers.
+
+---
+
 ## License
 
 MIT License - See [LICENSE](../../LICENSE) for details.

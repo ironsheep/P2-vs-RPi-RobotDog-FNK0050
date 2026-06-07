@@ -340,6 +340,42 @@ The §6.1 guide is realized in `src/isp_robot_dog.spin2`. What the engine actual
 > `isp_i2c_pca9685_servo` is intentionally **not** used (it cannot share one timebase across 13
 > joints). `isp_leg` stays the IK/angle provider.
 
+### 6.3 Motion progression: from Freenove-equivalent toward dog-like (and beyond)
+
+This driver is deliberately walking a path **from "it moves" to "it moves like a dog,"** and the *how*
+and *why* of each stage matter as much as the code:
+
+- **Stage 0 — Freenove baseline (the reference).** The upstream Python drives joints to angles via
+  simple **sinusoid gaits**, **snap-to-pose** (no easing), essentially **2-D** (fore-aft motion in the
+  sagittal plane), body held rigidly level. It works, but it reads **staccato and robotic** — symmetric,
+  planar, and the body never participates.
+
+- **Stage 1 — smooth-motion engine (build 0.1.1).** We replaced snap-then-wait with a **fixed-rate,
+  eased, blendable** engine (§2, §6.2): all joints share one timebase and one ease factor, so they start
+  and arrive together and transitions are gapless. The Freenove *trajectory shapes* were ported onto our
+  verified neutral — so motion became **fluid**, but it was still fundamentally the 2-D sinusoid.
+
+- **Stage 2 — honest range + kinematic model (2026-06).** We **corrected the servo µs mapping**
+  (500–2500 µs = full 0–180°, up from a compressed ~126°), **measured the real leg kinematics** (axes,
+  centers, per-joint drivable limits — spec §8), and added **per-joint clamps**. *Why this matters for
+  motion:* it unlocks the **full workspace** — especially the **coxa's lateral-vertical sweep**, which
+  the old mapping hid, and which is exactly the axis a 2-D gait never touches.
+
+- **Stage 3 — dog-like motion studies (current/next).** Study real canine locomotion and map it onto
+  our *achievable* range: **asymmetric foot-trajectory arcs** (quick lift, long low swing, soft plant),
+  **joint phasing & duty factor**, **body roll/bob**, and **using the coxa for 3-D leg motion** instead
+  of planar sinusoids. *Why ours looks robotic:* the Freenove shapes are symmetric, planar, and static;
+  dogs are **asymmetric, 3-D, and dynamic.** Each recommendation is constrained to what the measured
+  hardware can actually do.
+
+- **Stage 4 — active IMU balance (longer-term).** Close the loop: react to disturbances in real time
+  (step onto something, drifting out of balance) by adjusting foot placement / shifting CoG, or stopping
+  to avoid a tip. Today the IMU is used only for **static** leveling (§5); this layers **closed-loop
+  robustness** on top once the open-loop motion is dog-like. See `DOCs/FUTURE-DIRECTIONS.md` §5.
+
+Each stage **builds on the last**: the engine (1) is the fluid substrate; the model (2) is the workspace
++ safety; the studies (3) supply the trajectories; the IMU (4) supplies robustness.
+
 ---
 
 ## 7. Startup / init sequence
