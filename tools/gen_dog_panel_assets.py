@@ -41,7 +41,7 @@ HI_TEXT  = (10, 14, 12)        # dark label on the bright highlight
 # ---- button grid geometry ----
 MARGIN   = 15
 TITLE_H  = 40
-COLS, ROWS = 6, 4
+COLS, ROWS = 6, 5
 CELL_W, CELL_H = 100, 40
 GAP_X, GAP_Y   = 6, 8
 PITCH_X, PITCH_Y = CELL_W + GAP_X, CELL_H + GAP_Y
@@ -78,6 +78,13 @@ BUTTONS = [
     (3, 3, "SLOW",   "panel", "SPEED",        5, "spd"),
     (3, 4, "NORM",   "panel", "SPEED",       15, "spd"),
     (3, 5, "FAST",   "panel", "SPEED",       30, "spd"),
+
+    (4, 0, "DOWN",   "dog", "CMD_LIE_DOWN",   0, "pose"),
+    (4, 1, "BOW",    "dog", "CMD_BOW",        0, "pose"),
+    (4, 2, "PUSHUP", "dog", "CMD_PUSHUPS",    0, "gest"),
+    (4, 3, "NOD",    "dog", "CMD_NOD",        0, "gest"),
+    (4, 4, "SPIN",   "dog", "CMD_TURN_LEFT",  0, "gait"),   # panel-timed: TURN then auto-STOP
+    (4, 5, "SPEAK",  "io",  "SPEAK",          0, "io"),     # panel-composed: buzzer bark + nod
 ]
 
 

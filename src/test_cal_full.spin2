@@ -10,10 +10,11 @@
 '    pnut-ts -d -q src/test_cal_full.spin2
 '    cd src && pnut-term-ts -r test_cal_full.bin -b 2000000        # bare BMP names resolve here
 '  Assets (tools/gen_cal_assets.py): panel_bg.bmp, cal_font.bmp, panel_legs.bmp, panel_joints.bmp.
-'  SAFETY: robot lifted; trims clamp to +/-45 deg (no extremes).
+'  SAFETY: robot lifted; trims now reach +/-110 (past the calibrated 0..180 into the servo's extra travel).
+'          gotoMicroSec does not clamp -- advance slowly and back off the instant a joint buzzes/stalls.
 '
 '  Keys:  a/d = down/up by STEP    1 = step 1 deg    5 = step 5 deg
-'         j = next joint    l = next leg    c = center ALL (zero all trims)
+'         j = next joint    l = next leg    c = center ALL (zero all trims)    k = load committed calibration
 '         s = dump this joint    p = dump ALL (read back from src/logs/debug_*.log)
 
 CON
@@ -26,10 +27,10 @@ CON
   PULLUP_1K5      = 1
 
   CENTER_USEC     = 1500
-  USEC_SPAN       = 1400            ' 800..2200 us across 0..180 deg
+  USEC_SPAN       = 2000            ' 500..2500 us across 0..180 deg = FULL servo range (trim deg == servo deg)
   DEG_SPAN        = 180
-  TRIM_MIN        = -45
-  TRIM_MAX        = 45
+  TRIM_MIN        = -95            ' +/-90 = full 0..180 deg; the coxa goes ~+/-95. Per-joint mechanical limits:
+  TRIM_MAX        = 95             '   coxa +/-95, femur +/-43 (NARROW), tibia widest -- back off at any buzz/stall.
   STEP_FINE       = 1
   STEP_COARSE     = 5
 
@@ -65,7 +66,8 @@ CON
   JNAME_PAN   = 3                 ' joint-name strip row for HEAD's single joint
 
 OBJ
-  pca9685 : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+  pca9685  : "isp_i2c_pca9685" | PULL_UP_PCA9685_I2C = PULLUP_1K5
+  cal_data : "isp_calibration"                              ' the committed per-joint trims (baked into the backend)
 
 VAR
   long  legIdx
@@ -88,7 +90,7 @@ PUB main()
     legIdx := 0
     jntIdx := 0
     stepDeg := STEP_FINE
-    driveAll()                                              ' all joints to center+trim (trims=0)
+    driveAll()                                              ' START centered (trims = 0) -- calibrate from scratch; press 'k' for the committed positions
     waitms(300)
 
     setupWindow()
@@ -112,6 +114,7 @@ PUB main()
                     "j", "J": nextJoint()
                     "l", "L": nextLeg()
                     "c", "C": centerAll()
+                    "k", "K": loadCalibrated()
                     "s", "S": dumpOne()
                     "p", "P": dumpAll()
         waitms(25)
@@ -139,6 +142,14 @@ PRI centerAll() | idx
     DEBUG("cal: centered ALL (all trims = 0)")
     showValue()
 
+PRI loadCalibrated()
+' Jump to the committed (baked-in) calibrated positions, so poses are dialed relative to the true
+' neutral instead of raw center. (C still re-centers everything to zero.)
+    loadCalibration()
+    driveAll()
+    DEBUG("cal: loaded COMMITTED calibration (isp_calibration legTrim)")
+    showNameAndValue()
+
 PRI nextJoint()
     jntIdx := (jntIdx + 1) // jointCount()
     showNameAndValue()
@@ -154,6 +165,29 @@ PRI driveCur() | ch
     ch := long[@chan][curIndex()]
     if ch >= 0
         pca9685.gotoMicroSec(ch, CENTER_USEC + (trims[curIndex()] * USEC_SPAN) / DEG_SPAN)
+
+PRI loadCalibration() | c, f, t
+' Pre-load the committed per-joint trims from isp_calibration (the SAME set baked into the backend),
+' so the robot shows CALIBRATED here and dialing is relative to the true neutral -- not raw center.
+' Cal leg order 0=FL 1=BL 2=BR 3=FR (matches the `chan` map); legTrims returns coxa/femur/tibia.
+
+    c, f, t := cal_data.legTrims(cal_data.SIDE_LEFT,  cal_data.END_FRONT)     ' FL
+    trims[0] := c
+    trims[1] := f
+    trims[2] := t
+    c, f, t := cal_data.legTrims(cal_data.SIDE_LEFT,  cal_data.END_BACK)      ' BL
+    trims[3] := c
+    trims[4] := f
+    trims[5] := t
+    c, f, t := cal_data.legTrims(cal_data.SIDE_RIGHT, cal_data.END_BACK)      ' BR
+    trims[6] := c
+    trims[7] := f
+    trims[8] := t
+    c, f, t := cal_data.legTrims(cal_data.SIDE_RIGHT, cal_data.END_FRONT)     ' FR
+    trims[9]  := c
+    trims[10] := f
+    trims[11] := t
+    trims[12] := cal_data.headTrim()                                         ' HEAD pan
 
 PRI driveAll() | idx, ch
     repeat idx from 0 to (NUM_LEGS * SLOTS_PER_LEG) - 1
