@@ -1,20 +1,24 @@
 [//]: # (markdownlint-configure-file { "MD013": false, "MD033": false })
 
-# Bench Repairs 01 — Panel-Pass Findings (F1–F4)
+# Bench Repairs 01 — Panel-Pass Findings (F1–F4) + Retest Refinements (F5–F8)
+
+> **Status 2026-06-08.** **Part A — F1–F4: ✅ DONE, bench-verified 2026-06-08** (panel retest, logs
+> `debug_260607-225246` / `230530`; compile sweep 42/42 green). **Part B — F5–F8: the new active
+> scope** — refinements found *during* that retest (BOW head-return, post-gesture re-level, HELLO
+> foot-depth, battery < 5 V hard-floor). The originating cert plan + playbook are **closed and
+> archived** (`archive/2026-06-08-HARDWARE-CERTIFICATION-CLOSEOUT.md`). Ships **0.1.2**.
 
 ## Context
 
-A repair mini-sprint for the four findings surfaced by the **2026-06-07 control-panel
-certification pass**, recorded in
-[`SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`](SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md)
-(Findings section). Each fix lands in the **current singleton-I²C driver state** so the playbook
-becomes a *record of the fixes in the current state*; Stephen then **retests only the blocked
-exercises** (Ex 2 BOW, Ex 5 paw gestures, Ex 6 LED) on the bench via `test_dog_panel`. The later
-**non-singleton I²C cutover is a separate effort** whose second pass just re-confirms nothing changed.
+A repair sprint for findings surfaced by the **control-panel certification** work. **Part A (F1–F4)**
+came from the 2026-06-07 panel pass and is now fixed + bench-verified. **Part B (F5–F8)** came from
+the 2026-06-08 retest of those fixes. Each fix lands in the **current singleton-I²C driver state**;
+Stephen retests on the bench via `test_dog_panel` (real 3-cog shape, production mailboxes). (The
+former "I²C cutover second pass" is gone — the non-singleton I²C is now built only for the **new
+voice-recognition bus**, a separate last sprint; bus 1 stays the singleton.)
 
-**Scope confirmed with Stephen:** F1, F2, F3, F4 are all **in** (F2 panel readout included — his call,
-2026-06-07). **Out:** **D1** (gait-transition smoothing — a future post-keystone design item) and the
-**I²C cutover** (its own plan).
+**Scope:** Part A — F1, F2, F3, F4 (done). Part B — F5, F6, F7, F8 (active). **Out:** **D1**
+(gait-transition smoothing — future post-keystone design item).
 
 **Build / verify model.** No new subsystems; firmware is Spin2 (`pnut-ts`). The only automated gate is
 the **compile-all sweep** over `src/*.spin2` (`BUILD_COMMAND`/`TEST_COMMAND`). Real verification is the
@@ -23,6 +27,8 @@ real 3-cog shape) — never a bespoke path. Bench-tunable magnitudes get **reaso
 `-- bench-tune` comments** (project convention); all `.spin2` follow `DOCs/policy/SPIN2-AUTHORING-GUIDE.md`.
 
 ---
+
+# Part A — Panel-pass findings F1–F4 (✅ DONE, bench-verified 2026-06-08)
 
 ## 1. F1 — BOW raises the head so the snout clears the surface
 
@@ -154,30 +160,141 @@ reflects panel-side `ledMode`; no new command.
 together. *Error:* a regenerated-asset / CON mismatch shows as a misaligned or wrong-glyph readout —
 caught visually on the first run; regenerate and re-flash.
 
-## 5. Documentation + retest (close the loop)
+## 5. Documentation + retest (Part A close-the-loop) — ✅ DONE 2026-06-08
 
-**Why.** The fixes change observable behavior; the spec and the playbook record must catch up, and the
-blocked exercises must flip green to certify the repair.
+**Why.** The fixes change observable behavior; the spec and the playbook record had to catch up.
+
+**Done.**
+- **Spec — `DOCs/spec/P2-RobotDog-Specifications.md`:** ✅ noted BOW **raises the head**, LED ring
+  **default WHITE**, paw gestures **rebalance (leaned sit) before lifting FR** (#7a).
+- **Playbook —** ✅ on the 2026-06-08 bench retest, **Ex 2 / Ex 5 / Ex 6 flipped to pass** and
+  **F1–F4 marked resolved** (dated); the playbook is now **closed + archived** (local-only,
+  `archive/2026-06-08-HARDWARE-CERTIFICATION-CLOSEOUT.md`). Compile sweep **42/42 green**.
+- **Note:** the retest surfaced four follow-on refinements → **Part B (F5–F8)** below; their docs +
+  retest are §10, not here.
+
+---
+
+# Part B — Retest refinements F5–F8 (active, found 2026-06-08)
+
+> Bench prerequisite for all of Part B's motion retests: **charge the battery.** The 2026-06-08 run
+> sagged 6.7→5.3 V under load and confounded motion; once F8 lands, a low pack will halt the run.
+
+## 6. F5 — BOW restores the head after standing back up
+
+**Why.** Set head to 60, BOW raised it to ~120 (F1, correct); but `BOW→STAND` left the head at 120
+instead of returning to 60. A one-shot trick should leave the head where it started.
+
+**Current code.** `bowPose()` raises the head (`isp_robot_dog.spin2:1026`,
+`beginPoseMoveWithHead(POSE_FRAMES, head.HEAD_CENTER_DEG + cal.headTrim() + BOW_HEAD_UP_DEG)`). The
+following `standPose()` arms via the head-holding path (`beginPoseMove` → `tgtHeadDeg := curHeadDeg`),
+so the head holds at the raised angle. (F1's §1 originally flagged this "hold" as an acceptable
+follow — F5 supersedes that.)
+
+**Target.** Snapshot the head angle at bow **entry** (the live `curHeadDeg` before the raise) into a
+saved field; on leaving the bow (the next STAND after a BOW), restore the head to the saved angle via
+the eased head path rather than holding it raised. Implement as a facet of F6's "restore entry state"
+mechanism (shared — see §7), scoped so a deliberate `CMD_HEAD` between bow and stand still wins.
+
+**Verification.** *Normal:* head 60 → BOW (head eases up) → STAND (head eases **back to 60**), in
+lock-step with the body. *Edge:* a `CMD_HEAD` posted while bowed overrides the saved restore. *Error:*
+none — restore clamps via `panTo` like any head move.
+
+## 7. F6 — One-shot gestures re-level to their entry posture when they finish
+
+**Why.** SALUTE (and the paw gestures generally) **end with the body tilted off-center** — the leaned
+sit holds its lean after the paw lowers, so the dog sits crooked. Stephen's call: every one-shot
+gesture should ease back to the **leveled posture it started from** when it finishes, rather than
+freezing in the gesture's terminal tilt.
+
+**Current code.** `advancePawGesture` `GST_PAW_DOWN` (`isp_robot_dog.spin2:~940`) returns FR to the
+**leaned** sit (the F4 mirror) and `finishPawGesture` holds that leaned sit — so the body stays tilted
+until a later STAND. The lean offsets come from the shared `leanOffsets(freeLeg, latMag)` helper
+(added in F4).
+
+**Target.** At gesture completion, ease the lean back out to a **centered/level** end posture: in
+`GST_PAW_DOWN` (or a new final stage) drive all four feet from the leaned sit to the **level** sit
+(lean offset → 0), so the gesture ends balanced and centered. Unify with F5 as a single "restore the
+entry/neutral state on completion" mechanism (head for BOW, lateral lean for paw gestures). Keep the
+ease — no snap.
+
+**Integration.** `advancePawGesture`/`finishPawGesture` + the shared restore mechanism (also serves
+F5). HELLO already re-levels on its way out — confirm it still does.
+
+**Verification.** *Normal:* after SHAKE/SALUTE the body eases back to a **level, centered** seated
+posture (no residual tilt); BOW restores the head (F5). *Edge:* a command posted mid-gesture still
+takes over via the normal blend. *Error:* the re-level must not trip `guardReach` / a joint clamp —
+host clamp check is cheap.
+
+## 8. F7 — HELLO wave foot stops dipping into the floor
+
+**Why.** HELLO's lean/lift/CoG is good, but the waving FR foot **hits the floor** at the bottom of the
+wave — it shouldn't reach down that far.
+
+**Current code.** `waveY := ly + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)`
+(`isp_robot_dog.spin2:783`) centers the wave on `ly` (the lean-stand foot Y = ground level for that
+leg), so the down-half of the ±`HELLO_AMPL_MM=30` swing drives the foot ~30 mm **below** ground.
+
+**Target.** Add a **lift bias** so the whole wave floats above the surface — raise the wave center
+(`waveY := ly - HELLO_LIFT_MM + qsin(...)`, new bench-tunable `HELLO_LIFT_MM`) and/or trim
+`HELLO_AMPL_MM` so even the lowest point of the wave clears the floor. Bench-tune the pair so the wave
+is visible but never contacts.
+
+**Verification.** *Normal:* HELLO waves with the FR foot **clearly off the floor** through the whole
+wave; lean/CoG unchanged (still no tip). *Edge:* increase `HELLO_LIFT_MM` if it still grazes; reduce
+if the wave looks cramped. *Error:* lifting the center must not push the foot past a reach/clamp limit
+at the top of the swing — confirm.
+
+## 9. F8 — Battery hard-floor: halt under 5 V (confirm-burst), don't just ease-to-rest
+
+**Why.** The 2026-06-08 pack sagged **6.7→5.3 V under load** and the dog **kept executing gestures**
+the whole way down, flopping (`roll=11–13°`) — there wasn't enough power to hold. The current 6.4 V
+cutoff only **eases to RELAX as a background advisory; it never refuses a re-commanded motion**, so
+motion kept being attempted at 5.3 V.
+
+**Current code.** `LOW_BATTERY_CUTOFF_MV = 6400` (`isp_battery_monitor.spin2:38`); the safety floor
+(`senseTask` → `applySafetyFloor`) forces `relaxPose()` once after 3 consecutive `< 6400 mV` reads and
+sets `MODE_LOWBATT`, but does not latch a motion-refusing halt. (Minor: a `BATTERY LOW` line currently
+prints even **above** 6.4 V — tidy.)
+
+**Target (Stephen's spec).** Add a **hard floor at 5000 mV** distinct from the 6.4 V advisory:
+- On **any** read `< 5000 mV`, immediately take **3 confirming reads with a wait (~150 ms)** between
+  each (new CONs, e.g. `BATTERY_HALT_MV = 5000`, `BATTERY_HALT_CONFIRMS = 3`, `BATTERY_HALT_WAIT_MS`).
+- If **all 3** are `< 5000 mV` → **log `"battery too low"`**, ease to **RELAX**, and **latch a
+  refuse-motion HALT** (further motion commands are ignored until reset/power-cycle).
+- Keep **6.4 V** as the soft "getting low" advisory above the hard floor; fix the print to fire only
+  in-band.
+
+**Integration.** `isp_battery_monitor` (the confirm-burst + threshold) + the backend safety path
+(`applySafetyFloor` → latch + refuse motion + the `"battery too low"` log). No frontend change.
+
+**Verification.** *Normal (bench, drained/bench-supply pack):* below 5 V the dog logs `"battery too
+low"`, eases to RELAX, and **ignores further move commands**; between 5.0 and 6.4 V it still runs but
+logs the advisory. *Edge:* a single sub-5 V inrush sag that recovers on the confirm-burst does **not**
+halt (3-of-3 required). *Error:* the halt must ease (not snap) to RELAX; never drop limbs.
+
+## 10. F5–F8 documentation + retest (Part B close-the-loop)
 
 **Target.**
-- **Spec — `DOCs/spec/P2-RobotDog-Specifications.md`:** note BOW now **raises the head to clear the
-  surface**; the LED ring's **default color is WHITE** (color modes render from a fresh boot); the paw
-  gestures **rebalance (leaned sit) before lifting FR**. (Light touch — only where these behaviors are
-  described.)
-- **Playbook —** on Stephen's bench retest, flip **Ex 2 (BOW), Ex 5 (paw gestures), Ex 6 (LED)** to
-  pass and mark **F1–F4 resolved** in the Findings table (dated). Re-confirm the compile sweep stays
-  green.
+- **Spec —** note the BOW head-return (F5), the gesture re-level (F6), the HELLO foot lift (F7), and
+  the new **< 5 V hard-floor halt** behavior (F8) where each is described.
+- **Retest —** Stephen bench-retests on a **charged** pack via `test_dog_panel`: BOW head returns,
+  SALUTE/SHAKE end level, HELLO foot clears the floor, and (drained/bench-supply pack) the < 5 V halt
+  fires with the `"battery too low"` log. Author a **fresh** verification playbook for F5–F8 (the prior
+  one is archived) — or fold the steps into closeout. Re-confirm the compile sweep stays green.
+- **Closeout —** `sprint-closeout` + `build-wrapup` → stamp/tag **0.1.2**.
 
-**Verification.** Spec matches shipped behavior; the three blocked exercises read pass with the fix
-date; no Finding row left open except **D1** (explicitly future). The I²C-cutover second pass later
-re-runs the full playbook to confirm none of these regressed.
+**Verification.** Spec matches shipped behavior; each F5–F8 retest passes on the bench (dated); compile
+sweep green; sprint closed and 0.1.2 tagged.
 
 ---
 
 ## Files
 
 - `src/isp_robot_dog.spin2` — `BOW_HEAD_UP_DEG` CON + `bowPose` head-raise (§1); `advancePawGesture`
-  leaned sit + shared lean-offset helper (§3)
+  leaned sit + shared lean-offset helper (§3); head-restore + gesture re-level (§6, §7); `HELLO_LIFT_MM`
+  + wave bias (§8)
+- `src/isp_battery_monitor.spin2` — < 5 V hard-floor confirm-burst + halt-latch CONs (§9)
 - `src/isp_led_ring.spin2` — default `currentColor` to `strip.WHITE` (§2)
 - `tools/gen_dog_panel_assets.py` + `src/test_dog_panel.spin2` — LED-mode readout (§4)
 - `DOCs/spec/P2-RobotDog-Specifications.md` — behavior backport (§5)
@@ -212,14 +329,26 @@ re-runs the full playbook to confirm none of these regressed.
 
 ## Section ↔ task cross-reference
 
+**Part A (✅ done + bench-verified 2026-06-08):**
+
 | Plan § | Deliverable | Task | seq |
 | ------ | ----------- | ---- | --- |
-| §2 | F3 — LED default color (color modes render) | «#3» | 1 |
-| §1 | F1 — BOW raises the head to clear the surface | «#4» | 2 |
-| §3 | F4 — paw-gesture rebalance (leaned sit) | «#5» | 3 |
-| §4 | F2 — panel LED-mode readout | «#6» | 4 |
-| §5 | Docs backport + bench retest | «#7» | 5 |
+| §2 | F3 — LED default color (color modes render) | «#3» ✅ | 1 |
+| §1 | F1 — BOW raises the head to clear the surface | «#4» ✅ | 2 |
+| §3 | F4 — paw-gesture rebalance (leaned sit) | «#5» ✅ | 3 |
+| §4 | F2 — panel LED-mode readout | «#6» ✅ | 4 |
+| §5 | Docs backport + Part A retest flip | «#7» ✅ | 5 |
 
-Sprint tag: `bench-repairs-01` (per-task model hint as a second tag: `model:sonnet`, except F4 «#5» = `model:opus`).
+**Part B (active — tasks created at `plan-to-tasks`):**
 
-_No open questions block this plan — scope confirmed, code research complete, fixes are localized._
+| Plan § | Deliverable | Task | seq |
+| ------ | ----------- | ---- | --- |
+| §6 | F5 — BOW restores the head after standing | TBD | 6 |
+| §7 | F6 — gestures re-level to entry posture | TBD | 7 |
+| §8 | F7 — HELLO wave foot clears the floor | TBD | 8 |
+| §9 | F8 — battery < 5 V hard-floor halt | TBD | 9 |
+| §10 | F5–F8 docs + retest + 0.1.2 closeout | TBD | 10 |
+
+Sprint tag: `bench-repairs-01`.
+
+_Part A done + bench-verified; Part B scope confirmed with Stephen 2026-06-08, fixes localized (file:line above). No open questions block Part B._

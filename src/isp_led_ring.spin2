@@ -65,7 +65,7 @@ PUB start(pinNumber)
 '' @param pinNumber - P2 pin driving the WS2812 data line
 
     strip.start(pinNumber)
-    currentColor := strip.BLACK
+    currentColor := strip.WHITE                             ' visible default so SOLID/WIPE/CHASE render from a fresh boot (IO_LED_SOLID still recolors)
     currentMode := MODE_OFF
     animPhase := 0
     wipeIndex := 0

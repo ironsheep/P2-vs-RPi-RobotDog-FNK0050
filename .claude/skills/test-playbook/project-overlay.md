@@ -27,3 +27,12 @@ precondition to **lift/support the robot** so limbs are free, and to keep the ba
 (the board regulates from the pack; do not power servos from USB alone). Sensor exercises that
 read a 5 V-native part MUST note the level-shift requirement — the **HC-SR04 ECHO** line must be
 divided to ≤ 3.3 V before it reaches the P2 (the P2 is **not** 5 V tolerant).
+
+## Lifecycle — a playbook is a test plan; it is closed out and archived
+
+A playbook is a **test plan**, not a permanent living document. When all its exercises are
+resolved it is **closed out and archived alongside the plan whose work it verified**, via the
+local-only archive procedure in `sprint-closeout/project-overlay.md` (flip every exercise, resolve
+or carry every finding, then `mv` into `DOCs/plans/archive/` + `git rm --cached`). A playbook may
+span several sprints as the living bench record; archive it at the closeout that finishes its
+coverage. The next sprint gets a **fresh** playbook — archived ones are never reopened.

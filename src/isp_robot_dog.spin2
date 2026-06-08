@@ -114,11 +114,15 @@ CON ' ---- free-leg rebalance (lean the CoG into the support triangle of the oth
   LEAN_FRAMES         = 18          ' eased body-lean in/out around a freed leg (~0.36 s)
   LEAN_FWD_MM         = 8           ' fore/aft body lean magnitude (bench-tunable; +X assumed forward, flip if reversed)
   LEAN_LAT_MM         = 12          ' lateral body lean magnitude (bench-tunable)
+  PAW_LEAN_LAT_MM     = 16          ' dedicated lateral lean for the paw-gesture SIT (>LEAN_LAT_MM: the front stays
+                                    '   tall in the sit so the CoG sits higher/more forward). Bench-tunable; reach-safe
+                                    '   (leaned-sit foot reach ~103 mm << REACH_MAX_MM). Increase if SHAKE/SALUTE still tip.
 
 CON ' ---- new tricks: lie-down / bow / push-ups / nod (all bench-tunable) ----
   LIEDOWN_HEIGHT_MM   = 60          ' body low + level for the sphinx lie-down
   LIEDOWN_FRONT_X_MM  = 45          ' front feet reach forward (sphinx)
   BOW_FRONT_HEIGHT_MM = 50          ' front chest low for the play-bow (rear holds STAND_HEIGHT -> hindquarters up)
+  BOW_HEAD_UP_DEG     = 35          ' tilt head UP off center during a bow so the snout clears the surface -- bench-tune; FLIP SIGN if it tilts toward the table
   PUSHUP_FRAMES       = 90          ' total push-up bob frames (~1.8 s @ 50 Hz)
   PUSHUP_LEADIN_FRAMES = 14         ' ease the start pose -> stand BEFORE bobbing (no snap into push-ups)
   PUSHUP_DEPTH_MM     = 28          ' body dip per push-up
@@ -801,19 +805,31 @@ PRI advanceHello() | e, idx, lx, ly, lz, waveY
             if gesturePhase >= LEAN_FRAMES
                 finishGesture()
 
-PRI leanStandFoot(idx, freeLeg) : fx, fy, fz
+PRI leanOffsets(freeLeg, latMag) : dx, dz
+' The body-lean foot OFFSETS that move the CoG AWAY from `freeLeg` into the support triangle of the
+' other three legs (every foot shifts toward the freed leg's quadrant; foot delta = -body lean).
+' Shared lean math: the fore/aft magnitude is the common LEAN_FWD_MM; the lateral magnitude is
+' caller-supplied so a SIT (front tall, CoG higher) can lean harder than a STAND. Reused by
+' leanStandFoot (leaned stand) and the paw-gesture leaned sit. Bench-tunable (flip LEAN_FWD_MM if
+' +X is not "forward").
+'
+' @param freeLeg - the leg being freed (0=FL 1=BL 2=FR 3=BR)
+' @param latMag - lateral lean magnitude to apply (LEAN_LAT_MM for a stand, PAW_LEAN_LAT_MM for the sit)
+' @returns dx,dz - per-foot lean offsets (same for every leg; a uniform body translation)
+    dx := ((freeLeg == 0) or (freeLeg == 2)) ? LEAN_FWD_MM : -LEAN_FWD_MM      ' free a FRONT leg -> feet forward
+    dz := ((freeLeg == 2) or (freeLeg == 3)) ? -latMag : latMag               ' free a RIGHT leg -> feet right (-Z)
+
+PRI leanStandFoot(idx, freeLeg) : fx, fy, fz | dz
 ' General free-leg REBALANCE primitive: the leaned-stand foot target for leg `idx` when freeing
-' `freeLeg`. Leans the body toward the support triangle of the other three legs by translating the
-' body -- every foot shifts toward the freed leg's quadrant (foot delta = -body lean), so the CoG
-' moves AWAY from the freed leg and stays over the remaining tripod. Reuse for any single-leg move.
-' Magnitudes LEAN_FWD_MM / LEAN_LAT_MM are bench-tunable (flip LEAN_FWD_MM if +X is not "forward").
+' `freeLeg`. Leans the body toward the support triangle of the other three legs (see leanOffsets).
+' Reuse for any single-leg move at stand height.
 '
 ' @param idx - leg whose leaned foot target we want (0=FL 1=BL 2=FR 3=BR)
 ' @param freeLeg - the leg being freed
 ' @returns fx,fy,fz - leaned-stand foot target for leg idx
-    fx := ((freeLeg == 0) or (freeLeg == 2)) ? LEAN_FWD_MM : -LEAN_FWD_MM      ' free a FRONT leg -> feet forward
+    fx, dz := leanOffsets(freeLeg, LEAN_LAT_MM)
     fy := STAND_HEIGHT_MM + cal.stanceTrimY(idx)
-    fz := ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + (((freeLeg == 2) or (freeLeg == 3)) ? -LEAN_LAT_MM : LEAN_LAT_MM)   ' free a RIGHT leg -> feet right (-Z)
+    fz := ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + dz
 
 PRI advancePushups() | e, dip, y, idx, bob
 ' One-shot push-ups. A LEAD-IN first eases the start pose -> stand (so it never snaps into the bob),
@@ -867,7 +883,7 @@ PRI finishGesture()
     modeState := MODE_IDLE
     standPose()
 
-PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t
+PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t, lx, lz
 ' Staged right-front-paw gesture (shake / salute): ease into SIT for a stable base, act with the FR
 ' paw while the other three legs hold the sit, lower the paw, then hold the sit (a later STAND/STOP
 ' stands up). SHAKE acts in foot-XYZ (handshake bob); SALUTE drives the FR paw to hand-dialed RAW
@@ -875,14 +891,16 @@ PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t
 '
 ' Local Variables:
 ' @local e - ease factor; idx - leg index; sy/sz - sit Y/Z; frX/frY - SHAKE FR foot; c/f/t - SALUTE FR servo angles
+' @local lx/lz - body-lean foot offsets that rebalance the sit's CoG away from the freed FR paw
 
+    lx, lz := leanOffsets(FREE_FR_LEG, PAW_LEAN_LAT_MM)      ' LEAN the sit (not a level sit): shift CoG into the FL+BL+BR tripod before FR lifts
     case gestureStage
-        GST_SIT_IN:                                          ' ease all four feet from the start stand into the sit base
+        GST_SIT_IN:                                          ' ease all four feet from the start stand into the LEANED sit base
             e := easeFactor(gesturePhase + 1, GEST_SIT_FRAMES)
             repeat idx from 0 to NUM_LEGS - 1
                 sy := ((idx == 1) or (idx == 3)) ? SIT_FRONT_HEIGHT_MM : STAND_HEIGHT_MM   ' back legs lowered
-                sz := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM
-                curX[idx] := lerpFix(startX[idx], 0, e)
+                sz := ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + lz            ' + lateral lean
+                curX[idx] := lerpFix(startX[idx], lx, e)                                   ' + fore/aft lean (feet forward to free the front paw)
                 curY[idx] := lerpFix(startY[idx], sy, e)
                 curZ[idx] := lerpFix(startZ[idx], sz, e)
             commitCur()
@@ -936,8 +954,8 @@ PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t
             e := easeFactor(gesturePhase + 1, GEST_RECOVER_FRAMES)
             if gestureId == CMD_SALUTE                        ' ease the FR servos back to the sit angles (raw)
                 frLeg.driveServoDegrees(lerpFix(SALUTE_COXA_DEG, saluteSitC, e), lerpFix(SALUTE_FEMUR_DEG, saluteSitF, e), lerpFix(SALUTE_TIBIA_DEG, saluteSitT, e))
-            else                                             ' CMD_SHAKE -- foot-XYZ back to sit
-                setCur(2, lerpFix(startX[2], 0, e), lerpFix(startY[2], STAND_HEIGHT_MM, e), lerpFix(startZ[2], -STANCE_LATERAL_MM, e))
+            else                                             ' CMD_SHAKE -- foot-XYZ back to the LEANED sit (mirror GST_SIT_IN's lean so the rest stays balanced)
+                setCur(2, lerpFix(startX[2], lx, e), lerpFix(startY[2], STAND_HEIGHT_MM, e), lerpFix(startZ[2], -STANCE_LATERAL_MM + lz, e))
                 commitCur()
             gesturePhase++
             if gesturePhase >= GEST_RECOVER_FRAMES
@@ -1004,7 +1022,8 @@ PRI bowPose()
     setLegTarget(2, 0, BOW_FRONT_HEIGHT_MM, -STANCE_LATERAL_MM)   ' FR low
     setLegTarget(1, 0, STAND_HEIGHT_MM,      STANCE_LATERAL_MM)   ' BL tall (rear up)
     setLegTarget(3, 0, STAND_HEIGHT_MM,     -STANCE_LATERAL_MM)   ' BR tall
-    beginPoseMove(POSE_FRAMES)
+    ' raise the snout so it clears the surface -- head eases UP in lock-step with the chest dropping
+    beginPoseMoveWithHead(POSE_FRAMES, head.HEAD_CENTER_DEG + cal.headTrim() + BOW_HEAD_UP_DEG)
 
 PRI paradeRestPose()
 ' Parade rest: tall, near-vertical legs -- the lowest holding-torque / longest-hold stance. This is a
@@ -1070,6 +1089,17 @@ PRI beginPoseMove(frames)
 ' @param frames - eased move duration, frames
 
     tgtHeadDeg := curHeadDeg
+    armMove(frames)
+
+PRI beginPoseMoveWithHead(frames, headDeg)
+' Arm an eased pose move toward the current leg targets AND a head target; both ease together over
+' `frames`. The legs+head sibling of beginPoseMove (which instead HOLDS the head). Use when a pose
+' must move the head in lock-step with the legs (e.g. the play-bow raising the snout).
+'
+' @param frames - eased move duration, frames
+' @param headDeg - head tilt target, degrees (caller adds HEAD_CENTER_DEG + cal.headTrim() trim)
+
+    tgtHeadDeg := headDeg
     armMove(frames)
 
 PRI armMove(frames)

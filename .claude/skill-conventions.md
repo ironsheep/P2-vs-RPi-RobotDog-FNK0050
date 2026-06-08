@@ -48,7 +48,8 @@ BUILD_VERSION_EXAMPLE: 0.1.0
 
 ```yaml
 PLAN_DIR: DOCs/plans/
-PLAN_ARCHIVE_DIR: DOCs/plans/archive/
+PLAN_ARCHIVE_DIR: DOCs/plans/archive/   # git-ignored — LOCAL HISTORY ONLY, not under version control (see sprint-closeout/project-overlay.md)
+CLOSEOUT_FILENAME_PATTERN: <YYYY-MM-DD>-<NAME>-CLOSEOUT.md   # match the established local form
 ANALYSIS_DIR: DOCs/analysis/
 PUNCH_LIST_DOC: DOCs/plans/PUNCH-LIST.md
 RELEASE_NOTES_DOC: DOCs/RELEASE-NOTES.md

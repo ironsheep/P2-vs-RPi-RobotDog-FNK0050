@@ -227,6 +227,12 @@ REF/
 # Local reference work kept out of the repo by intent (e.g. the voice driver under test).
 DOCs/REF-NO-COMMMIT/
 
+# Completed-work archive — LOCAL HISTORY ONLY, intentionally NOT under version control.
+# Plans / playbooks / closeout docs are moved here at sprint closeout (see the sprint-closeout
+# skill + its project-overlay). Archiving = move the file in here AND `git rm --cached` the
+# original so it leaves VC but persists on disk as local history.
+DOCs/plans/archive/
+
 # --- devcontainer ---
 .devcontainer/docker-compose.override.yml
 .devcontainer/*.zip

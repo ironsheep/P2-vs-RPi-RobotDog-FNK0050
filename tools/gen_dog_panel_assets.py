@@ -12,6 +12,7 @@ Outputs (written next to the .spin2 source, in src/):
   dog_btn_hi.bmp     100xN  - vertical strip of HIGHLIGHTED button cells, one per grid slot (srcY = slot*CELL_H)
   dog_font.bmp       Wx34   - readout digit/sign font strip, cells "0123456789-"
   dog_modes.bmp      WxN    - mode-name word strip (IDLE/GAITING/GESTURE/RELAXED/LOWBATT), srcY = mode*MODE_CELL_H
+  dog_led_modes.bmp  WxN    - LED-mode word strip (OFF/SOLID/WIPE/CHASE/RAINBOW/CYCLE), srcY = ledMode*LED_CELL_H
 """
 import os
 from PIL import Image, ImageDraw, ImageFont
@@ -104,6 +105,10 @@ RGLYPHS = "0123456789-"        # index 0..9 digits, 10 = minus
 MODE_NAMES = ["IDLE", "GAITING", "GESTURE", "RELAXED", "LOWBATT"]
 MODE_CELL_W, MODE_CELL_H = 150, 30
 
+# ---- LED-mode word strip (matches isp_led_ring MODE_OFF..MODE_RAINBOW_CYCLE, the LED button's step order) ----
+LED_MODE_NAMES = ["OFF", "SOLID", "WIPE", "CHASE", "RAINBOW", "CYCLE"]
+LED_CELL_W, LED_CELL_H = 150, 30        # same cell as the mode strip (holds "RAINBOW")
+
 # ---- readout field layout (lower panel) ----
 RO_Y = GRID_BOTTOM + 14        # top of readout area
 COL_L_X, COL_R_X = MARGIN, 340 # two label columns
@@ -116,10 +121,11 @@ FIELDS = [
     ("tilt", "TILT", COL_R_X, 0, RW * 7 + 8, 7),    # P -nn  R -nn  -> 7 glyph slots
     ("dist", "DIST", COL_R_X, 1, RW * 4 + 8, 4),    # mm
     ("ping", "PING", COL_R_X, 2, RW * 5 + 8, 5),    # seq
+    ("led",  "LED",  COL_L_X, 3, LED_CELL_W + 6 + RW, 1),  # word (layer 5) + a 1-digit index to its right
 ]
 LABEL_W = 56                   # gap from label to value box
 BOX_H = RH + 4
-PANEL_H = RO_Y + 3 * RO_ROW + 40   # leave room for footer
+PANEL_H = RO_Y + 4 * RO_ROW + 40   # 4 readout rows (left col adds LED at row 3); leave room for footer
 
 
 def field_box(f):
@@ -216,13 +222,22 @@ def make_font_strip():
     img.save(os.path.join(OUT, "dog_font.bmp"))
 
 
-def make_modes_strip():
-    img = Image.new("RGB", (MODE_CELL_W, MODE_CELL_H * len(MODE_NAMES)), BOX)
+def make_word_strip(names, cell_w, cell_h, filename):
+    """Vertical word-cell strip: one centered green name per cell (srcY = index*cell_h)."""
+    img = Image.new("RGB", (cell_w, cell_h * len(names)), BOX)
     d = ImageDraw.Draw(img)
     f = load_font(20)
-    for i, name in enumerate(MODE_NAMES):
-        centered(d, MODE_CELL_W // 2, i * MODE_CELL_H + MODE_CELL_H // 2, name, f, GLYPH)
-    img.save(os.path.join(OUT, "dog_modes.bmp"))
+    for i, name in enumerate(names):
+        centered(d, cell_w // 2, i * cell_h + cell_h // 2, name, f, GLYPH)
+    img.save(os.path.join(OUT, filename))
+
+
+def make_modes_strip():
+    make_word_strip(MODE_NAMES, MODE_CELL_W, MODE_CELL_H, "dog_modes.bmp")
+
+
+def make_led_modes_strip():
+    make_word_strip(LED_MODE_NAMES, LED_CELL_W, LED_CELL_H, "dog_led_modes.bmp")
 
 
 def emit_spin2_con():
@@ -242,12 +257,16 @@ def emit_spin2_con():
     print(f"  GLYPH_MINUS = 10")
     print(f"  MODE_CELL_W = {MODE_CELL_W}")
     print(f"  MODE_CELL_H = {MODE_CELL_H}")
+    print(f"  LED_CELL_W = {LED_CELL_W}")
+    print(f"  LED_CELL_H = {LED_CELL_H}")
     print("\n' ---- readout field boxes (box_x, box_y) and digit slot-0 X (slots step by RW) ----")
     for f in FIELDS:
         key = f[0].upper()
         bx, by, bw, bh = field_box(f)
         sl = field_slots(f)
         s0 = sl[0] if sl else bx + 4
+        if f[0] == "led":
+            s0 = bx + LED_CELL_W + 6        # index digit sits to the RIGHT of the LED-mode name cell
         print(f"  RO_{key}_BX = {bx}")
         print(f"  RO_{key}_BY = {by}")
         print(f"  RO_{key}_BW = {bw}")
@@ -266,7 +285,8 @@ if __name__ == "__main__":
     make_btn_hi()
     make_font_strip()
     make_modes_strip()
-    for fn in ("dog_panel_bg.bmp", "dog_btn_hi.bmp", "dog_font.bmp", "dog_modes.bmp"):
+    make_led_modes_strip()
+    for fn in ("dog_panel_bg.bmp", "dog_btn_hi.bmp", "dog_font.bmp", "dog_modes.bmp", "dog_led_modes.bmp"):
         print("wrote:", os.path.join(OUT, fn))
     print(f"panel {PANEL_W}x{PANEL_H}; button cell {CELL_W}x{CELL_H} pitch {PITCH_X}x{PITCH_Y}; readout font {RW}x{RH}")
     emit_spin2_con()

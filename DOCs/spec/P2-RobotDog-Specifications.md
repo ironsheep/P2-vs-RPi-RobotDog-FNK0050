@@ -126,6 +126,14 @@ written first and the sequence word last (lock-free publish, ToOps §4).
 | `CMD_STEP_LEFT` | 11 | speed | latched sidestep-left |
 | `CMD_STEP_RIGHT` | 12 | speed | latched sidestep-right |
 
+> **One-shot gestures.** Beyond the motion set above, the backend exposes one-shot gesture
+> commands (`CMD_HELLO`, `CMD_SHAKE`, `CMD_SALUTE`, `CMD_BOW`, …), each eased in/out and rejected
+> while busy (D3). Two behaviors to note: **`CMD_BOW`** drops the front chest **and raises the
+> head** (`BOW_HEAD_UP_DEG`, eased in lock-step with the chest) so the snout clears the surface;
+> the **paw gestures** (`CMD_SHAKE` / `CMD_SALUTE`) first **rebalance into a leaned sit** — shifting
+> the CoG into the FL/BL/BR tripod (`PAW_LEAN_LAT_MM`) — **before** lifting the front-right paw, so
+> the body holds without tipping. ⚠ bench — lean and head-raise magnitudes are bench-tunable.
+
 **Telemetry (getters, safe from any cog):**
 
 | Getter | Returns |
@@ -151,7 +159,9 @@ written first and the sequence word last (lock-free publish, ToOps §4).
 | `IO_RANGE_OFF` | 8 | — | stop ranging |
 
 Ring modes (`IO_LED_MODE` arg0): `OFF/SOLID/WIPE/CHASE/RAINBOW/RAINBOW_CYCLE` (0–5); ≥ WIPE are
-animated.
+animated. The three color modes (`SOLID`/`WIPE`/`CHASE`) paint in a **default white** until an
+`IO_LED_SOLID $RRGGBB` overrides the color, so they render visibly from a fresh boot (before any
+color is posted); `RAINBOW`/`RAINBOW_CYCLE` self-color via the wheel.
 
 **Telemetry:**
 
