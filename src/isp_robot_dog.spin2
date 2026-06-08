@@ -347,6 +347,15 @@ PUB isBusy() : bActive
 
     bActive := busyFlag
 
+PUB isHalted() : bHalted
+'' F8: TRUE once the critical-battery HARD floor has latched a motion-refusing halt (distinct from
+'' the 6.4 V soft advisory). An orchestrator/panel polls this to STOP the whole run, not just see a
+'' refused command -- the backend failure propagated up.
+''
+'' @returns bHalted - TRUE if a critical-battery halt is latched (clears only on reset/power-cycle)
+
+    bHalted := bHaltLatched
+
 PUB getMoveComplete() : bComplete
 '' TRUE once the active eased move has reached its target; FALSE while one is running. Cleared when
 '' a move is armed, set when it finishes -- watch the FALSE->TRUE edge for "move done".
@@ -511,9 +520,9 @@ PRI senseTask() | passCount, pitchDeg, rollDeg
             if battMilliVolts < battery.CRITICAL_BATTERY_MV and not bHaltLatched   ' F8: hard floor -- confirm before halting
                 if battery.isCriticalLowConfirmed()           ' 3 fresh reads, waits between; rejects a recovering sag
                     bCriticalConfirmed := TRUE                ' applySafetyFloor (dispatch task) does the eased halt
-            if battMilliVolts < BATTERY_WARN_MV and ((getct() - nextBattWarnCt) >= 0)
+            if battMilliVolts < BATTERY_WARN_MV and not bHaltLatched and ((getct() - nextBattWarnCt) >= 0)
                 nextBattWarnCt := getct() + battWarnTicks     ' throttle warnings to BATTERY_WARN_SECS apart
-                DEBUG("!! BATTERY LOW ", udec_(battMilliVolts), " mV (cutoff ", udec_(battery.LOW_BATTERY_CUTOFF_MV), " mV) -- charge soon; results unreliable")
+                DEBUG("!! BATTERY LOW ", udec_(battMilliVolts), " mV (cutoff ", udec_(battery.LOW_BATTERY_CUTOFF_MV), " mV) -- charge soon; results unreliable")   ' F8: silence once HALTED so the log ends cleanly at the halt
         tasknext()
 
 PRI consumeCommand() | requestedCmd

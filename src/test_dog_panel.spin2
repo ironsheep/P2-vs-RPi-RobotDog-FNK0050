@@ -193,6 +193,9 @@ PUB main() | backendCog, ioCog, s
     DEBUG("panel ready -- click a button (or press its key)")
 
     repeat
+        if dog.isHalted()                                    ' F8: backend halted on critical battery -- stop the WHOLE run, log it last
+            DEBUG("!! battery too low -- RUN HALTED; panel stopping, no further input.  battery=", udec_(dog.getBatteryMilliVolts()), " mV")
+            quit
         keyCode := 0
         DEBUG(`pnl `pc_key(@keyCode))                        ' poll keyboard (LAST in stmt)
         if keyCode <> prevKey
