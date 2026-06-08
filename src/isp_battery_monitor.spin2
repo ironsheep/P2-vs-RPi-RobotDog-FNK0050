@@ -36,6 +36,9 @@ CON ' ---- battery sensing ----
   BATTERY_CHANNEL        = 0        ' ADS7830 input wired to the pack divider
   DIVIDER_RATIO          = 3        ' pack = pin x 3 -- METERED 2026-06-01 (7.68 V pack, raw 131)
   LOW_BATTERY_CUTOFF_MV  = 6400     ' below this is low (Freenove auto-shutdown < 6.4 V)
+  CRITICAL_BATTERY_MV    = 5000     ' F8: HARD floor -- below this the dog HALTS (motors can't hold; pack near-dead)
+  CRITICAL_CONFIRMS      = 3        ' fresh reads that must ALL be below the hard floor before halting
+  CRITICAL_WAIT_MS       = 150      ' wait between confirm reads (let a transient inrush sag recover first)
   SAMPLE_COUNT           = 9        ' odd count so the median is a real sample
   MEDIAN_INDEX           = SAMPLE_COUNT / 2
   MV_PER_TENTH_VOLT      = 100      ' 100 mV per 0.1 V
@@ -115,6 +118,20 @@ PUB isLowBattery() : bLow
 '' @returns bLow - TRUE if pack voltage is below LOW_BATTERY_CUTOFF_MV
 
     bLow := batteryMilliVolts() < LOW_BATTERY_CUTOFF_MV
+
+PUB isCriticalLowConfirmed() : bCritical
+'' F8 confirm-burst. Call after a single read has been seen below CRITICAL_BATTERY_MV. Takes
+'' CRITICAL_CONFIRMS fresh reads, CRITICAL_WAIT_MS apart, and returns TRUE only if EVERY read is
+'' below the hard floor -- so a momentary inrush sag that recovers does NOT halt the dog. BLOCKING
+'' (~CRITICAL_CONFIRMS * CRITICAL_WAIT_MS); acceptable because it runs only at the brownout edge,
+'' where the dog is about to be forced to rest anyway.
+''
+'' @returns bCritical - TRUE only if all CRITICAL_CONFIRMS reads were below CRITICAL_BATTERY_MV
+    repeat CRITICAL_CONFIRMS
+        if batteryMilliVolts() >= CRITICAL_BATTERY_MV
+            return FALSE                                     ' recovered -- not a hard-floor halt
+        waitms(CRITICAL_WAIT_MS)
+    return TRUE
 
 CON ' ---- License ----
 

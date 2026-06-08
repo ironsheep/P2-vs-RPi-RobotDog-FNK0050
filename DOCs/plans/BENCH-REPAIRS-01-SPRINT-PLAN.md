@@ -343,11 +343,11 @@ sweep green; sprint closed and 0.1.2 tagged.
 
 | Plan § | Deliverable | Task | seq |
 | ------ | ----------- | ---- | --- |
-| §6 | F5 — BOW restores the head after standing | TBD | 6 |
-| §7 | F6 — gestures re-level to entry posture | TBD | 7 |
-| §8 | F7 — HELLO wave foot clears the floor | TBD | 8 |
-| §9 | F8 — battery < 5 V hard-floor halt | TBD | 9 |
-| §10 | F5–F8 docs + retest + 0.1.2 closeout | TBD | 10 |
+| §6 | F5 — BOW restores the head after standing | «#8» | 6 |
+| §7 | F6 — gestures re-level to entry posture | «#9» | 7 |
+| §8 | F7 — HELLO wave foot clears the floor | «#10» | 8 |
+| §9 | F8 — battery < 5 V hard-floor halt | «#11» | 9 |
+| §10 | F5–F8 docs + retest + 0.1.2 closeout | «#12» | 10 |
 
 Sprint tag: `bench-repairs-01`.
 

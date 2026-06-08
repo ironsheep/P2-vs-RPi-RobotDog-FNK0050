@@ -57,7 +57,7 @@ CON ' ---- commands (frontend -> backend mailbox) ----
   #16, CMD_LIE_DOWN, CMD_BOW, CMD_PUSHUPS, CMD_NOD, CMD_SET_SPEED, CMD_PARADE_REST
 
 CON ' ---- paw-gesture stages (CMD_SHAKE / CMD_SALUTE) ----
-  #0, GST_SIT_IN, GST_ACT, GST_PAW_DOWN, GST_LEAN_IN, GST_LEAN_OUT
+  #0, GST_SIT_IN, GST_ACT, GST_PAW_DOWN, GST_LEAN_IN, GST_LEAN_OUT, GST_LEVEL_OUT
   ' paw gestures: SIT_IN -> ACT -> PAW_DOWN ;  hello: LEAN_IN -> ACT -> LEAN_OUT (rebalance to free a leg)
 
 CON ' ---- mode states (telemetry) ----
@@ -90,6 +90,8 @@ CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
   GAIT_LEADIN_FRAMES  = 14          ' eased "stop to neutral" before a gait's trajectory (no snap between gaits)
   HELLO_X_MM          = 80          ' raised front-right foot reach for the wave
   HELLO_AMPL_MM       = 30          ' wave height amplitude
+  HELLO_LIFT_MM       = 40          ' F7: retract the wave foot this far off the ground so the whole wave stays
+                                    ' airborne (must exceed HELLO_AMPL_MM or the down-half hits the floor) -- bench-tune
   HELLO_SPEED_DEG     = 20          ' wave phase advance per frame
   HELLO_FRAMES        = 36          ' frames before the gesture completes
   HELLO_LEADIN_FRAMES = 8           ' frames to ease the FR foot out to the wave reach (no start snap)
@@ -211,6 +213,8 @@ DAT ' ---- internal control state (backend cog only) ----
   saluteSitT       LONG  0
   bLowBattLatched  BYTE  FALSE
   bShowDebug       BYTE  FALSE
+  bCriticalConfirmed BYTE FALSE                              ' F8: senseTask confirmed a <5 V pack (confirm-burst passed)
+  bHaltLatched     BYTE  FALSE                               ' F8: critical-battery HALT engaged -- refuse motion until reset
   lowBattReadings  LONG  0                                    ' consecutive low battery readings
   nextBattWarnCt   LONG  0                                    ' CT deadline for the next low-battery log warning
   battWarnTicks    LONG  0                                    ' clkfreq * BATTERY_WARN_SECS (warning throttle)
@@ -235,6 +239,8 @@ DAT ' ---- motion engine state (backend cog only): foot targets in mm, leg order
   curHeadDeg       LONG  0                                    ' head pan the servo is AT now
   tgtHeadDeg       LONG  0                                    ' head pan target
   startHeadDeg     LONG  0                                    ' head pan at move start
+  savedHeadDeg     LONG  0                                    ' pre-bow head angle, restored on the pose leaving the bow (F5)
+  headReturnPending LONG 0                                    ' TRUE while a bow-raised head owes a return to savedHeadDeg (F5)
   moveFrames       LONG  0                                    ' total frames in the active eased move (0 = at rest)
   moveFrame        LONG  0                                    ' frames elapsed in the active move (0..moveFrames)
   frameTicks       LONG  0                                    ' getct() ticks per motion frame (clkfreq / FRAME_HZ)
@@ -502,6 +508,9 @@ PRI senseTask() | passCount, pitchDeg, rollDeg
                 lowBattReadings++
             else
                 lowBattReadings := 0                          ' reset on any healthy read (ignores inrush)
+            if battMilliVolts < battery.CRITICAL_BATTERY_MV and not bHaltLatched   ' F8: hard floor -- confirm before halting
+                if battery.isCriticalLowConfirmed()           ' 3 fresh reads, waits between; rejects a recovering sag
+                    bCriticalConfirmed := TRUE                ' applySafetyFloor (dispatch task) does the eased halt
             if battMilliVolts < BATTERY_WARN_MV and ((getct() - nextBattWarnCt) >= 0)
                 nextBattWarnCt := getct() + battWarnTicks     ' throttle warnings to BATTERY_WARN_SECS apart
                 DEBUG("!! BATTERY LOW ", udec_(battMilliVolts), " mV (cutoff ", udec_(battery.LOW_BATTERY_CUTOFF_MV), " mV) -- charge soon; results unreliable")
@@ -515,6 +524,8 @@ PRI consumeCommand() | requestedCmd
 
     requestedCmd := cmdId
     ackSeq := cmdSeq                                          ' acknowledge (frontend sees accepted)
+    if bHaltLatched                                          ' F8: after a critical-battery halt, refuse all motion until reset
+        return
     moveKind := requestedCmd                                  ' publish which move this is (enum, for telemetry)
     case requestedCmd
         CMD_STOP, CMD_STAND:
@@ -591,8 +602,15 @@ PRI consumeCommand() | requestedCmd
             paradeRestPose()
 
 PRI applySafetyFloor()
-' Backend-owned safety: force rest (once) when the pack drops below the cutoff.
+' Backend-owned safety, two tiers: the 6.4 V SOFT floor eases to RELAX once (advisory); the 5 V HARD
+' floor (F8) also LATCHES a motion-refusing HALT that holds until reset/power-cycle.
 
+    if bCriticalConfirmed and bHaltLatched == FALSE          ' F8: hard floor -- eased halt + refuse motion
+        bHaltLatched := TRUE
+        activeMode := MODE_RELAXED
+        modeState := MODE_LOWBATT
+        relaxPose()                                          ' EASE to rest -- never drop the limbs
+        DEBUG("!! battery too low ", udec_(battMilliVolts), " mV -- HALT (reset required)")
     if lowBattReadings >= LOW_BATT_CONSECUTIVE
         if bLowBattLatched == FALSE
             bLowBattLatched := TRUE
@@ -780,10 +798,15 @@ PRI advanceHello() | e, idx, lx, ly, lz, waveY
 
         GST_ACT:                                             ' FR waves from the leaned stand; FL/BL/BR hold the lean
             lx, ly, lz := leanStandFoot(FREE_FR_LEG, FREE_FR_LEG)
-            waveY := ly + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
+            ' F7: retract the wave by HELLO_LIFT_MM so the whole wave stays OFF the floor (was centered on
+            ' ly = ground, so the down-half drove the foot into the surface). Ease the lift in over the
+            ' lead-in together with the reach so the foot never snaps up.
             if gesturePhase < HELLO_LEADIN_FRAMES
-                setCur(FREE_FR_LEG, lerpFix(startX[FREE_FR_LEG], HELLO_X_MM, easeFactor(gesturePhase + 1, HELLO_LEADIN_FRAMES)), waveY, lz)
+                e := easeFactor(gesturePhase + 1, HELLO_LEADIN_FRAMES)
+                waveY := lerpFix(ly, ly - HELLO_LIFT_MM, e) + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
+                setCur(FREE_FR_LEG, lerpFix(startX[FREE_FR_LEG], HELLO_X_MM, e), waveY, lz)
             else
+                waveY := ly - HELLO_LIFT_MM + qsin(HELLO_AMPL_MM, degToUnits(gesturePhase * HELLO_SPEED_DEG), 0)
                 setCur(FREE_FR_LEG, HELLO_X_MM, waveY, lz)
             commitCur()
             gesturePhase++
@@ -959,6 +982,22 @@ PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t, lx, lz
                 commitCur()
             gesturePhase++
             if gesturePhase >= GEST_RECOVER_FRAMES
+                longmove(@startX, @curX, NUM_LEGS)           ' F6: anchor start[] := leaned sit for the level-out ease
+                longmove(@startY, @curY, NUM_LEGS)
+                longmove(@startZ, @curZ, NUM_LEGS)
+                gesturePhase := 0
+                gestureStage := GST_LEVEL_OUT
+
+        GST_LEVEL_OUT:                                        ' F6: ease the LEANED sit -> a LEVEL, centered sit so the gesture ends balanced (not tilted)
+            e := easeFactor(gesturePhase + 1, GEST_SIT_FRAMES)
+            repeat idx from 0 to NUM_LEGS - 1
+                sy := ((idx == 1) or (idx == 3)) ? SIT_FRONT_HEIGHT_MM : STAND_HEIGHT_MM   ' same per-leg sit heights
+                curX[idx] := lerpFix(startX[idx], 0, e)                                    ' lean fore/aft -> 0
+                curY[idx] := lerpFix(startY[idx], sy, e)
+                curZ[idx] := lerpFix(startZ[idx], (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM, e)   ' lateral lean -> 0
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= GEST_SIT_FRAMES
                 finishPawGesture()
 
 PRI finishPawGesture()
@@ -1022,6 +1061,11 @@ PRI bowPose()
     setLegTarget(2, 0, BOW_FRONT_HEIGHT_MM, -STANCE_LATERAL_MM)   ' FR low
     setLegTarget(1, 0, STAND_HEIGHT_MM,      STANCE_LATERAL_MM)   ' BL tall (rear up)
     setLegTarget(3, 0, STAND_HEIGHT_MM,     -STANCE_LATERAL_MM)   ' BR tall
+    ' F5: remember the pre-bow head angle (only on first bow, so repeated bows keep the original)
+    ' so the pose that LEAVES the bow returns the head there instead of holding it raised.
+    if not headReturnPending
+        savedHeadDeg := curHeadDeg
+    headReturnPending := TRUE
     ' raise the snout so it clears the surface -- head eases UP in lock-step with the chest dropping
     beginPoseMoveWithHead(POSE_FRAMES, head.HEAD_CENTER_DEG + cal.headTrim() + BOW_HEAD_UP_DEG)
 
@@ -1039,6 +1083,7 @@ PRI headPanTo(panDeg)
 ' @param panDeg - head pan target, degrees (calibration trim is added here)
 
     panDeg += cal.headTrim()                                  ' apply the head calibration trim (CMD_HEAD missed it)
+    headReturnPending := FALSE                                ' F5: an explicit look cancels a pending bow head-return
     tgtHeadDeg := panDeg
     if activeMode == MODE_GAITING or activeMode == MODE_GESTURE_BUSY
         curHeadDeg := panDeg
@@ -1088,7 +1133,11 @@ PRI beginPoseMove(frames)
 '
 ' @param frames - eased move duration, frames
 
-    tgtHeadDeg := curHeadDeg
+    if headReturnPending                                     ' F5: the pose leaving a bow returns the head to its pre-bow angle
+        tgtHeadDeg := savedHeadDeg
+        headReturnPending := FALSE
+    else
+        tgtHeadDeg := curHeadDeg                             ' poses otherwise HOLD the head
     armMove(frames)
 
 PRI beginPoseMoveWithHead(frames, headDeg)
