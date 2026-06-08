@@ -180,6 +180,30 @@ caught visually on the first run; regenerate and re-flash.
 > Bench prerequisite for all of Part B's motion retests: **charge the battery.** The 2026-06-08 run
 > sagged 6.7→5.3 V under load and confounded motion; once F8 lands, a low pack will halt the run.
 
+## Bench retest status — 2026-06-08 (end of day)
+
+- **F8 — ✅ BENCH-VERIFIED.** The hard floor fired on a genuinely flat pack (**4998 mV — a dead
+  charger, NOT a scaling artifact**; so the ÷3 divider + 5 V threshold are both confirmed). Added a
+  **halt→panel propagation** (commit `af1c0a9`): backend `isHalted()` getter + suppress the repeated
+  warning once halted; `test_dog_panel` polls `dog.isHalted()`, logs `RUN HALTED`, and **quits the
+  loop** so the run stops cleanly (last log line = the halt, no trailing mouse/key polls). Stephen
+  confirmed "failed as it should." Then swapped to a charged spare set.
+- **F5 / F6 / F7 — code-green, bench verdict PENDING (visual; rerun tomorrow).** Fresh-battery run
+  (`debug_260608-020218.log`) executed every gesture with **zero clamp/guard/reach trips, clean
+  finish** — but the outcomes are visual and weren't observed yet.
+  - **F5:** NOT yet exercised — no `CMD_HEAD` was posted before the BOW, so the head was centered and
+    the return was invisible. **Tomorrow: press head 60 or 120, THEN BOW, THEN STAND**, watch the head
+    return to that angle.
+  - **F6/F7:** outcomes need eyes — was SHAKE/SALUTE level at the end? did the HELLO paw clear the floor?
+- **Instrumentation — ✅ DONE (so tomorrow's rerun is measurable).** The panel now logs IMU after
+  **every non-gait move** (poses + gestures), with named labels and F5/F6 hints (SHAKE/SALUTE/BOW)
+  — `watchMove` gates on `KIND_GAIT`, `logImuSettle` covers all non-gait slots + a default. The
+  headless drivers + the demo already log tilt after every move via `dog.dumpState()` (`tilt p= r=`),
+  so coverage is now complete panel + drivers. Tomorrow's panel rerun captures the gesture end-tilt
+  so F6 ("ends level" → roll≈0) is read from the log, not eyeballed.
+- **For the keystone (not this sprint):** the leveled STAND residual sits at ~**−3° pitch / +4° roll**
+  across the run — a data point for the keystone stance re-zero (already deferred there).
+
 ## 6. F5 — BOW restores the head after standing back up
 
 **Why.** Set head to 60, BOW raised it to ~120 (F1, correct); but `BOW→STAND` left the head at 120

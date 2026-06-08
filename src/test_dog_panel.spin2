@@ -333,7 +333,7 @@ PRI watchMove() | pitch, roll, done
             if dog.getModeState() <> dog.MODE_GAITING and moveTimer > 8
                 done := TRUE
     if done
-        if activeMoveSlot == 0 or activeMoveSlot == 2 or activeMoveSlot == 3
+        if activeMoveKind <> KIND_GAIT                       ' IMU after EVERY non-gait move (pose + gesture) so it's always evaluable
             pitch, roll := dog.getAttitude()
             logImuSettle(activeMoveSlot, pitch, roll)
         restoreBtn(activeMoveSlot)
@@ -343,8 +343,17 @@ PRI watchMove() | pitch, roll, done
 PRI logImuSettle(slot, pitch, roll)
     case slot
         0: DEBUG[DBG_IMU]("IMU after STAND: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (leveled stand; target 0/0)")
+        1: DEBUG[DBG_IMU]("IMU after SIT: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (sit -- rear lowered; roll~0 if centered)")
         2: DEBUG[DBG_IMU]("IMU after CROUCH: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (crouch is symmetric -- NOT leveled)")
         3: DEBUG[DBG_IMU]("IMU after RELAX: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (resting tuck -- surface/baseline reference)")
+        12: DEBUG[DBG_IMU]("IMU after HELLO: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (should return to neutral stand)")
+        13: DEBUG[DBG_IMU]("IMU after SHAKE: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (F6: should end LEVEL -- roll near 0)")
+        14: DEBUG[DBG_IMU]("IMU after SALUTE: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (F6: should end LEVEL -- roll near 0)")
+        24: DEBUG[DBG_IMU]("IMU after LIE_DOWN: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg")
+        25: DEBUG[DBG_IMU]("IMU after BOW: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg  (F5: head should have returned)")
+        26: DEBUG[DBG_IMU]("IMU after PUSHUPS: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg")
+        27: DEBUG[DBG_IMU]("IMU after NOD: pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg")
+        other: DEBUG[DBG_IMU]("IMU after move (slot ", sdec_(slot), "): pitch=", sdec_(pitch), " roll=", sdec_(roll), " deg")
 
 PRI stepLed()
 '' Step the LED ring through its built-in patterns on each press: OFF -> SOLID -> WIPE -> CHASE ->
