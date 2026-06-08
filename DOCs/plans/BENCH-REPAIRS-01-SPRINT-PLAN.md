@@ -210,4 +210,16 @@ re-runs the full playbook to confirm none of these regressed.
   Dog-Like Motion step; it touches the per-leg neutral keystone changes.
 - **Non-singleton I²C cutover** — separate plan; this repair batch lands in the current singleton state.
 
+## Section ↔ task cross-reference
+
+| Plan § | Deliverable | Task | seq |
+| ------ | ----------- | ---- | --- |
+| §2 | F3 — LED default color (color modes render) | «#3» | 1 |
+| §1 | F1 — BOW raises the head to clear the surface | «#4» | 2 |
+| §3 | F4 — paw-gesture rebalance (leaned sit) | «#5» | 3 |
+| §4 | F2 — panel LED-mode readout | «#6» | 4 |
+| §5 | Docs backport + bench retest | «#7» | 5 |
+
+Sprint tag: `bench-repairs-01` (per-task model hint as a second tag: `model:sonnet`, except F4 «#5» = `model:opus`).
+
 _No open questions block this plan — scope confirmed, code research complete, fixes are localized._
