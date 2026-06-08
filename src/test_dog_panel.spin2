@@ -62,6 +62,10 @@ CON
   REFRESH_POLLS = 6                ' readout refresh every REFRESH_POLLS * 25 ms (~150 ms)
   BEEP_FLASH_POLLS = 8             ' BEEP highlight flash duration (~200 ms)
   SPIN_POLLS    = 80               ' SPIN = posted TURN, auto-STOP after ~2 s (80 * 25 ms)
+  SETTLE_POLLS  = 48               ' dwell after a move's COMMANDED completion before sampling the IMU (~1.2 s @ 25 ms/poll).
+                                   ' Must exceed POSE_FRAMES (0.6 s) + physical body/servo settle: HELLO/NOD/PUSHUPS clear
+                                   ' isBusy() at the START of their return-to-stand ease, so an immediate read catches a
+                                   ' mid-transition tilt, not the final pose. This dwell makes every logged IMU certifiable.
   SPEAK_BARK_MS = 90               ' SPEAK buzzer "bark" duration
   GLYPH_MINUS   = 10
 
@@ -129,7 +133,7 @@ OBJ
 VAR
   long  activeMoveSlot                                       ' slot of the in-progress move (-1 none)
   long  activeMoveKind                                       ' KIND_POSE / KIND_GEST / KIND_GAIT
-  long  movePhase                                            ' 0 waiting move-start, 1 waiting move-done
+  long  movePhase                                            ' 0 waiting move-start, 1 waiting move-done, 2 settle dwell before IMU sample
   long  moveTimer                                            ' polls since the move armed (safety timeout)
   long  ledMode                                              ' current LED pattern 0..5 (slot 18 lit when not OFF)
   long  rangeOn                                              ' ranging toggle state (slot 20 lit)
@@ -308,8 +312,10 @@ PRI startMove(slot, kind)
 PRI watchMove() | pitch, roll, done
 '' Non-blocking: detect when the active move finishes, then de-highlight it. Poses/head watch the
 '' move-complete FALSE->TRUE edge; gestures watch the busy flag; gaits are latched (clear only if the
-'' backend leaves GAITING, e.g. a STOP replaced it or the safety floor fired). On a STAND/CROUCH/RELAX
-'' completion, log the settled IMU tilt (leveling check / surface baseline).
+'' backend leaves GAITING, e.g. a STOP replaced it or the safety floor fired). For non-gait moves a
+'' SETTLE_POLLS dwell (movePhase 2) follows the commanded-completion edge before the IMU is sampled,
+'' so the logged tilt is the FINAL settled pose -- not a mid-transition reading (the leveling/return-
+'' to-stand ease and physical body settle both lag the busy/complete flags). Gaits log no IMU.
     if activeMoveSlot < 0
         return
     done := FALSE
@@ -319,19 +325,23 @@ PRI watchMove() | pitch, roll, done
             if movePhase == 0
                 if dog.getMoveComplete() == FALSE or moveTimer > 40
                     movePhase := 1
-            else
+            elseif movePhase == 1
                 if dog.getMoveComplete() or moveTimer > 240
-                    done := TRUE
+                    movePhase := 2                           ' commanded ease done -> begin settle dwell
+                    moveTimer := 0
         KIND_GEST:
             if movePhase == 0
                 if dog.isBusy() or moveTimer > 40
                     movePhase := 1
-            else
+            elseif movePhase == 1
                 if dog.isBusy() == FALSE or moveTimer > 400
-                    done := TRUE
+                    movePhase := 2                           ' gesture cleared busy -> begin settle dwell
+                    moveTimer := 0
         KIND_GAIT:
             if dog.getModeState() <> dog.MODE_GAITING and moveTimer > 8
                 done := TRUE
+    if movePhase == 2 and moveTimer >= SETTLE_POLLS          ' non-gait: dwell elapsed, the pose has settled
+        done := TRUE
     if done
         if activeMoveKind <> KIND_GAIT                       ' IMU after EVERY non-gait move (pose + gesture) so it's always evaluable
             pitch, roll := dog.getAttitude()

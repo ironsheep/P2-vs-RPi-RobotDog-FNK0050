@@ -2,7 +2,7 @@
 
 The behavioral contract of the Robot Dog (FNK0050) P2 firmware: the smooth-motion engine, the
 gait catalog and its speed knob, the three-cog command + telemetry interface (mailboxes A and B),
-and the IMU static-leveling behavior. This is the **as-built spec** for build 0.1.1 — what the
+and the IMU static-leveling behavior. This is the **as-built spec** for build 0.1.2 — what the
 firmware *does* and how a caller drives it.
 
 ![doc-spec](https://img.shields.io/badge/doc-spec-informational?labelColor=black)
@@ -128,11 +128,22 @@ written first and the sequence word last (lock-free publish, ToOps §4).
 
 > **One-shot gestures.** Beyond the motion set above, the backend exposes one-shot gesture
 > commands (`CMD_HELLO`, `CMD_SHAKE`, `CMD_SALUTE`, `CMD_BOW`, …), each eased in/out and rejected
-> while busy (D3). Two behaviors to note: **`CMD_BOW`** drops the front chest **and raises the
-> head** (`BOW_HEAD_UP_DEG`, eased in lock-step with the chest) so the snout clears the surface;
-> the **paw gestures** (`CMD_SHAKE` / `CMD_SALUTE`) first **rebalance into a leaned sit** — shifting
-> the CoG into the FL/BL/BR tripod (`PAW_LEAN_LAT_MM`) — **before** lifting the front-right paw, so
-> the body holds without tipping. ⚠ bench — lean and head-raise magnitudes are bench-tunable.
+> while busy (D3). Behaviors to note:
+> - **`CMD_BOW`** drops the front chest **and raises the head** (`BOW_HEAD_UP_DEG`, eased in
+>   lock-step with the chest) so the snout clears the surface; on the **`BOW→STAND`** that leaves the
+>   bow, the head **eases back to the angle it held at bow entry** (snapshotted into `savedHeadDeg`),
+>   so a one-shot bow returns the head where it started — a deliberate `CMD_HEAD` posted while bowed
+>   still wins.
+> - The **paw gestures** (`CMD_SHAKE` / `CMD_SALUTE`) first **rebalance into a leaned sit** —
+>   shifting the CoG into the FL/BL/BR tripod (`PAW_LEAN_LAT_MM`) — **before** lifting the front-right
+>   paw; when the paw lowers they **ease the lean back out to a level, centered seated posture** (the
+>   `GST_LEVEL_OUT` stage) so the gesture ends balanced, not frozen in its terminal tilt, and holds
+>   that level sit until a later `CMD_STAND`/`CMD_STOP`.
+> - **`CMD_HELLO`** waves the front-right foot with a **lift bias** (`HELLO_LIFT_MM`) so the whole
+>   wave floats above the surface and the foot never contacts the floor, then re-levels to the neutral
+>   stand on its way out.
+>
+> ⚠ bench — lean, head-raise, and wave-lift magnitudes are bench-tunable.
 
 **Telemetry (getters, safe from any cog):**
 
@@ -140,7 +151,7 @@ written first and the sequence word last (lock-free publish, ToOps §4).
 |--------|---------|
 | `getModeState()` | `MODE_IDLE/GAITING/GESTURE_BUSY/RELAXED/LOWBATT` (0–4) |
 | `getBatteryMilliVolts()` | pack millivolts (median, divider undone) |
-| `getAttitude()` | `pitchDeg, rollDeg` (accelerometer tilt) |
+| `getAttitude()` | `pitchDeg, rollDeg` (accelerometer tilt; **pitch = fore/aft, roll = lateral** — see §5 axis mapping) |
 | `isBusy()` | TRUE while a one-shot gesture runs |
 
 ### 4.2 Mailbox B — IO (`isp_io_controller`)
@@ -205,24 +216,41 @@ closed loop).
   `standPose` and power-on `seedStand`).
 - **Confirm:** re-run `test_dog_level` after storing → residual tilt should be ≈ 0.
 
+**Axis mapping.** The MPU6050 is **mounted rotated 90° in yaw** relative to the textbook X-forward
+orientation, so the board's accelerometer **Y axis reads fore/aft** and **X reads lateral**.
+`isp_imu.tiltDegrees()` therefore computes **pitch from accel Y** (fore/aft) and **roll from accel X**
+(lateral) — `getAttitude()` returns pitch = fore/aft tilt (nose-up positive), roll = left/right tilt.
+The fore/aft mapping was **bench-confirmed 2026-06-08** (`test_dog_panel`: a rear-down `SIT` drove
+pitch positive, a front-down `BOW` drove it negative, while the lateral channel held the build's
+residual). The **lateral (roll) sign is not yet confirmed** — no pure left/right tilt was in that run.
+
 Sign convention (confirm on bench): **+pitch = front high** → lower front, raise back; **+roll =
 left high** → lower left, raise right. Both trims default **0**, so the stance is unchanged until
 metered.
 
-> ⚠ bench — the IMU mounting sign and the captured trim values are bench-determined; defaults are 0.
+> ⚠ bench — the IMU **roll (lateral) sign** and the captured trim values are bench-determined; verify
+> the roll sign by tilting the body left/right. The fore/aft (pitch) mapping is confirmed; defaults are 0.
 
 ---
 
 ## 6. Safety floor
 
-Backend-owned (D2), independent of frontend commands: when the pack reads below the cutoff
-(`isp_battery_monitor`, < 6.4 V) for `LOW_BATT_CONSECUTIVE = 3` consecutive reads (inrush sags are
-ignored), the backend **eases** to RELAX and reports `MODE_LOWBATT`. The forced rest uses the same
-eased pose path — no snap.
+Backend-owned (D2), independent of frontend commands. **Two tiers:**
+
+- **Soft advisory — < 6.4 V** (`LOW_BATTERY_CUTOFF_MV`): when the pack reads below the cutoff for
+  `LOW_BATT_CONSECUTIVE = 3` consecutive reads (inrush sags are ignored), the backend **eases** to
+  RELAX and reports `MODE_LOWBATT`. The forced rest uses the same eased pose path — no snap. The dog
+  may still be re-commanded above the hard floor.
+- **Hard floor — < 5.0 V** (`CRITICAL_BATTERY_MV`, F8): on **any** read below 5 V the backend runs a
+  **confirm-burst** — 3 fresh reads with a wait between (`isCriticalLowConfirmed()`) so a single
+  recovering sag does **not** trip it. If all 3 confirm, it logs **`"battery too low"`**, eases to
+  RELAX, and **latches a refuse-motion HALT** (`isHalted()` TRUE) — further motion is ignored until
+  reset/power-cycle. The orchestrator/panel polls `isHalted()` to **stop the whole run**, not just
+  see a refused command. Bench-verified 2026-06-08 (the floor fired on a genuinely flat 4998 mV pack).
 
 ---
 
-## 7. Constants reference (build 0.1.1)
+## 7. Constants reference (build 0.1.2)
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
@@ -240,6 +268,11 @@ eased pose path — no snap.
 | `GAIT_STEP_DEG` | 15 | default gait speed (deg/frame) |
 | `GAIT_SPEED_MIN` / `GAIT_SPEED_MAX` | 3 / 45 | gait speed clamp |
 | `HALF_BODY_LENGTH_MM` / `HALF_BODY_WIDTH_MM` | 136 / 76 | leveling lever arms |
+| `BOW_HEAD_UP_DEG` | 35 | bow head-raise off center (F1); restored to `savedHeadDeg` on `BOW→STAND` (F5) |
+| `PAW_LEAN_LAT_MM` | 16 | paw-gesture leaned-sit lateral CoG shift (F4); eased back out on finish (F6) |
+| `HELLO_LIFT_MM` | 40 | HELLO wave lift bias so the foot floats off the floor (F7) |
+| `LOW_BATTERY_CUTOFF_MV` | 6400 | soft low-battery advisory → ease to RELAX (§6) |
+| `CRITICAL_BATTERY_MV` | 5000 | hard floor (F8): confirm-burst → `"battery too low"` + latched HALT (§6) |
 
 ---
 
