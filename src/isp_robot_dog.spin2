@@ -691,62 +691,76 @@ PRI advanceGait() | aUnits, bUnits
     commitCur()
     advanceGaitPhase()
 
-PRI gaitLinearFwd(aUnits, bUnits) | strideXA, footYA, strideXB, footYB
-' Forward/backward trot: X = 12*cos(phase) stride, Y = 6*sin(phase)+h lift (clamped to stance).
+PRI plantFloor(idx, liftMm) : footY
+' Per-leg gait planted-Y floor: swing the foot up by liftMm off THIS leg's neutral floor, clamped so
+' it never extends past that floor (feet lift UP from the loaded crouch, never push below it). Front
+' and rear neutral floors differ, so each foot in a mixed diagonal pair must get its OWN floor.
+'
+' @param idx - leg index (0=FL 1=BL 2=FR 3=BR)
+' @param liftMm - this frame's swing offset (qsin), mm
+' @returns footY - planted/lifted foot extension for this leg (mm)
+
+    footY := (neutralFootY(idx) + liftMm) <# neutralFootY(idx)
+
+PRI gaitLinearFwd(aUnits, bUnits) | strideXA, liftA, strideXB, liftB
+' Forward/backward trot: X = 12*cos(phase) stride, Y = per-leg neutral floor + 6*sin(phase) lift.
+' Stride X stays centred on 0 (the rear -X load tuck is a STATIC-neutral property; the walking
+' trajectory is the Freenove-faithful X=0-centred stride -- do not re-introduce the tuck here).
 '
 ' @param aUnits - pair A phase, P2 units
 ' @param bUnits - pair B phase, P2 units
 ' Local Variables:
-' @local strideXA, footYA - pair A fore/aft + extension
-' @local strideXB, footYB - pair B fore/aft + extension
+' @local strideXA, liftA - pair A fore/aft stride + swing offset
+' @local strideXB, liftB - pair B fore/aft stride + swing offset
 
     strideXA := qcos(GAIT_X_AMPL_MM, aUnits, 0)
     strideXB := qcos(GAIT_X_AMPL_MM, bUnits, 0)
-    footYA := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, aUnits, 0)) <# STAND_HEIGHT_MM
-    footYB := (STAND_HEIGHT_MM + qsin(GAIT_LIFT_MM, bUnits, 0)) <# STAND_HEIGHT_MM
-    setCur(0, strideXA, footYA,  STANCE_LATERAL_MM)          ' FL (pair A)
-    setCur(3, strideXA, footYA, -STANCE_LATERAL_MM)          ' BR (pair A)
-    setCur(1, strideXB, footYB,  STANCE_LATERAL_MM)          ' BL (pair B)
-    setCur(2, strideXB, footYB, -STANCE_LATERAL_MM)          ' FR (pair B)
+    liftA := qsin(GAIT_LIFT_MM, aUnits, 0)
+    liftB := qsin(GAIT_LIFT_MM, bUnits, 0)
+    setCur(0, strideXA, plantFloor(0, liftA),  STANCE_LATERAL_MM)   ' FL (pair A)
+    setCur(3, strideXA, plantFloor(3, liftA), -STANCE_LATERAL_MM)   ' BR (pair A)
+    setCur(1, strideXB, plantFloor(1, liftB),  STANCE_LATERAL_MM)   ' BL (pair B)
+    setCur(2, strideXB, plantFloor(2, liftB), -STANCE_LATERAL_MM)   ' FR (pair B)
 
-PRI gaitSidestep(aUnits, bUnits) | zA, footYA, zB, footYB
-' Sidestep trot: X = 0, Z = 10*cos(phase) added to the lateral stance, Y = 5*sin(phase)+h lift.
+PRI gaitSidestep(aUnits, bUnits) | zA, liftA, zB, liftB
+' Sidestep trot: X = 0, Z = 10*cos(phase) added to the lateral stance, Y = per-leg neutral floor +
+' 5*sin(phase) lift.
 '
 ' @param aUnits - pair A phase, P2 units
 ' @param bUnits - pair B phase, P2 units
 ' Local Variables:
-' @local zA, footYA - pair A lateral shift + extension
-' @local zB, footYB - pair B lateral shift + extension
+' @local zA, liftA - pair A lateral shift + swing offset
+' @local zB, liftB - pair B lateral shift + swing offset
 
     zA := qcos(STEP_Z_AMPL_MM, aUnits, 0)
     zB := qcos(STEP_Z_AMPL_MM, bUnits, 0)
-    footYA := (STAND_HEIGHT_MM + qsin(STEP_LIFT_MM, aUnits, 0)) <# STAND_HEIGHT_MM
-    footYB := (STAND_HEIGHT_MM + qsin(STEP_LIFT_MM, bUnits, 0)) <# STAND_HEIGHT_MM
-    setCur(0, 0, footYA,  STANCE_LATERAL_MM + zA)            ' FL (pair A)
-    setCur(3, 0, footYA, -STANCE_LATERAL_MM + zA)            ' BR (pair A)
-    setCur(1, 0, footYB,  STANCE_LATERAL_MM + zB)            ' BL (pair B)
-    setCur(2, 0, footYB, -STANCE_LATERAL_MM + zB)            ' FR (pair B)
+    liftA := qsin(STEP_LIFT_MM, aUnits, 0)
+    liftB := qsin(STEP_LIFT_MM, bUnits, 0)
+    setCur(0, 0, plantFloor(0, liftA),  STANCE_LATERAL_MM + zA)   ' FL (pair A)
+    setCur(3, 0, plantFloor(3, liftA), -STANCE_LATERAL_MM + zA)   ' BR (pair A)
+    setCur(1, 0, plantFloor(1, liftB),  STANCE_LATERAL_MM + zB)   ' BL (pair B)
+    setCur(2, 0, plantFloor(2, liftB), -STANCE_LATERAL_MM + zB)   ' FR (pair B)
 
-PRI gaitTurn(aUnits, bUnits, turnSign) | xA, footYA, xB, footYB
-' Turn-in-place trot: X = 3*cos(phase), Y = 8*sin(phase)+h, Z coupled to X (Freenove turn mapping
-' decoded onto our neutral). FL/BR = pair A (X1), BL/FR = pair B (X2). turnSign = +1 left, -1 right
-' (right is left with the X amplitudes negated).
+PRI gaitTurn(aUnits, bUnits, turnSign) | xA, liftA, xB, liftB
+' Turn-in-place trot: X = 3*cos(phase), Y = per-leg neutral floor + 8*sin(phase) lift, Z coupled to X
+' (Freenove turn mapping decoded onto our neutral). FL/BR = pair A (X1), BL/FR = pair B (X2).
+' turnSign = +1 left, -1 right (right is left with the X amplitudes negated).
 '
 ' @param aUnits - pair A phase, P2 units
 ' @param bUnits - pair B phase, P2 units
 ' @param turnSign - +1 turn left, -1 turn right
 ' Local Variables:
-' @local xA, footYA - pair A fore/aft + extension
-' @local xB, footYB - pair B fore/aft + extension
+' @local xA, liftA - pair A fore/aft + swing offset
+' @local xB, liftB - pair B fore/aft + swing offset
 
     xA := turnSign * qcos(TURN_XZ_AMPL_MM, aUnits, 0)
     xB := turnSign * qcos(TURN_XZ_AMPL_MM, bUnits, 0)
-    footYA := (STAND_HEIGHT_MM + qsin(TURN_LIFT_MM, aUnits, 0)) <# STAND_HEIGHT_MM
-    footYB := (STAND_HEIGHT_MM + qsin(TURN_LIFT_MM, bUnits, 0)) <# STAND_HEIGHT_MM
-    setCur(0, -xA, footYA,  xA + STANCE_LATERAL_MM)          ' FL (pair A)
-    setCur(3,  xA, footYA, -xA - STANCE_LATERAL_MM)          ' BR (pair A)
-    setCur(1, -xB, footYB, -xB + STANCE_LATERAL_MM)          ' BL (pair B)
-    setCur(2,  xB, footYB,  xB - STANCE_LATERAL_MM)          ' FR (pair B)
+    liftA := qsin(TURN_LIFT_MM, aUnits, 0)
+    liftB := qsin(TURN_LIFT_MM, bUnits, 0)
+    setCur(0, -xA, plantFloor(0, liftA),  xA + STANCE_LATERAL_MM)   ' FL (pair A)
+    setCur(3,  xA, plantFloor(3, liftA), -xA - STANCE_LATERAL_MM)   ' BR (pair A)
+    setCur(1, -xB, plantFloor(1, liftB), -xB + STANCE_LATERAL_MM)   ' BL (pair B)
+    setCur(2,  xB, plantFloor(2, liftB),  xB - STANCE_LATERAL_MM)   ' FR (pair B)
 
 PRI advanceGaitPhase()
 ' Advance the gait phase by the signed speed step, wrapping into 0..359 in either direction.
@@ -786,7 +800,24 @@ PRI setGaitSpeed(speedArg)
     else
         gaitStepDeg := GAIT_STEP_DEG
 
-PRI leadGaitNeutral() | e, idx, fx, fy, fz
+PRI easeAllToNeutral(e) | idx, fx, fy, fz
+' Ease all four feet from the anchored start[] pose toward the loaded-rear-crouch neutral by factor e
+' (no commit). The shared "ease to neutral" inner loop for the gait lead-in, the HELLO lean-out, and
+' the push-up lead-in -- one definition so neutral is reached the same way everywhere.
+'
+' @param e - eased 0..1 interpolation factor for this frame
+
+' Local Variables:
+' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
+' @local fx, fy, fz - neutral foot target for this leg (mm)
+
+    repeat idx from 0 to NUM_LEGS - 1
+        fx, fy, fz := neutralFootTarget(idx)
+        curX[idx] := lerpFix(startX[idx], fx, e)
+        curY[idx] := lerpFix(startY[idx], fy, e)
+        curZ[idx] := lerpFix(startZ[idx], fz, e)
+
+PRI leadGaitNeutral() | e
 ' Gait lead-in: ease all feet from the start pose to the neutral gait stance, so a gait BEGINS from
 ' rest instead of snapping (covers pose->gait and gait->gait changes -- the "stop, then start" feel).
 ' Eases to the loaded-rear-crouch neutral (neutralFootTarget); the first walking frame then
@@ -794,15 +825,9 @@ PRI leadGaitNeutral() | e, idx, fx, fy, fz
 '
 ' Local Variables:
 ' @local e - eased 0..1 interpolation factor for this lead-in frame
-' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
-' @local fx, fy, fz - neutral foot target for this leg (mm)
 
     e := easeFactor(GAIT_LEADIN_FRAMES - gaitLeadin + 1, GAIT_LEADIN_FRAMES)
-    repeat idx from 0 to NUM_LEGS - 1
-        fx, fy, fz := neutralFootTarget(idx)
-        curX[idx] := lerpFix(startX[idx], fx, e)
-        curY[idx] := lerpFix(startY[idx], fy, e)
-        curZ[idx] := lerpFix(startZ[idx], fz, e)
+    easeAllToNeutral(e)
     commitCur()
     gaitLeadin--
 
@@ -869,12 +894,9 @@ PRI advanceHello() | e, idx, lx, ly, lz, waveY
                 gesturePhase := 0
                 gestureStage := GST_LEAN_OUT
 
-        GST_LEAN_OUT:                                        ' ease leaned stand -> neutral level stand, then finish
+        GST_LEAN_OUT:                                        ' ease leaned stand -> loaded-rear neutral, then finish
             e := easeFactor(gesturePhase + 1, LEAN_FRAMES)
-            repeat idx from 0 to NUM_LEGS - 1
-                curX[idx] := lerpFix(startX[idx], 0, e)
-                curY[idx] := lerpFix(startY[idx], STAND_HEIGHT_MM + cal.stanceTrimY(idx), e)
-                curZ[idx] := lerpFix(startZ[idx], (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM, e)
+            easeAllToNeutral(e)
             commitCur()
             gesturePhase++
             if gesturePhase >= LEAN_FRAMES
@@ -894,40 +916,49 @@ PRI leanOffsets(freeLeg, latMag) : dx, dz
     dx := ((freeLeg == 0) or (freeLeg == 2)) ? LEAN_FWD_MM : -LEAN_FWD_MM      ' free a FRONT leg -> feet forward
     dz := ((freeLeg == 2) or (freeLeg == 3)) ? -latMag : latMag               ' free a RIGHT leg -> feet right (-Z)
 
-PRI leanStandFoot(idx, freeLeg) : fx, fy, fz | dz
+PRI leanStandFoot(idx, freeLeg) : fx, fy, fz | dx, dz, nx, ny, nz
 ' General free-leg REBALANCE primitive: the leaned-stand foot target for leg `idx` when freeing
-' `freeLeg`. Leans the body toward the support triangle of the other three legs (see leanOffsets).
-' Reuse for any single-leg move at stand height.
+' `freeLeg`. Leans the body toward the support triangle of the other three legs (see leanOffsets),
+' relative to the loaded-rear-crouch neutral. Reuse for any single-leg move at neutral height.
 '
 ' @param idx - leg whose leaned foot target we want (0=FL 1=BL 2=FR 3=BR)
 ' @param freeLeg - the leg being freed
 ' @returns fx,fy,fz - leaned-stand foot target for leg idx
-    fx, dz := leanOffsets(freeLeg, LEAN_LAT_MM)
-    fy := STAND_HEIGHT_MM + cal.stanceTrimY(idx)
-    fz := ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + dz
 
-PRI advancePushups() | e, dip, y, idx, bob
-' One-shot push-ups. A LEAD-IN first eases the start pose -> stand (so it never snaps into the bob),
-' then the body flexes down/up around the LEVEL stand a few times and returns. All four legs share
-' one Y (a dip below stand) so it stays level while it bobs.
+' Local Variables:
+' @local dx, dz - body-lean fore/aft + lateral offsets (from leanOffsets)
+' @local nx, ny, nz - this leg's neutral foot target (mm)
 
-    if gesturePhase < PUSHUP_LEADIN_FRAMES                    ' ease start pose -> stand (no snap)
+    dx, dz := leanOffsets(freeLeg, LEAN_LAT_MM)
+    nx, ny, nz := neutralFootTarget(idx)
+    fx := nx + dx
+    fy := ny
+    fz := nz + dz
+
+PRI advancePushups() | e, dip, idx, bob, fx, fy, fz
+' One-shot push-ups. A LEAD-IN first eases the start pose -> the loaded-rear-crouch neutral (so it
+' never snaps into the bob), then the body flexes down/up a few times and returns. Each leg bobs off
+' its OWN neutral floor (front and rear differ), so the dip stays parallel to the new stance.
+'
+' Local Variables:
+' @local e - eased 0..1 lead-in factor; dip - this frame's downward flex (mm); bob - bob frame index
+' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
+' @local fx, fy, fz - neutral foot target for this leg (mm)
+
+    if gesturePhase < PUSHUP_LEADIN_FRAMES                    ' ease start pose -> neutral (no snap)
         e := easeFactor(gesturePhase + 1, PUSHUP_LEADIN_FRAMES)
-        repeat idx from 0 to NUM_LEGS - 1
-            curX[idx] := lerpFix(startX[idx], 0, e)
-            curY[idx] := lerpFix(startY[idx], STAND_HEIGHT_MM + cal.stanceTrimY(idx), e)
-            curZ[idx] := lerpFix(startZ[idx], (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM, e)
+        easeAllToNeutral(e)
         commitCur()
         gesturePhase++
         return
 
     bob := gesturePhase - PUSHUP_LEADIN_FRAMES
     dip := (PUSHUP_DEPTH_MM - qcos(PUSHUP_DEPTH_MM, degToUnits(bob * PUSHUP_SPEED_DEG), 0)) / 2
-    y := STAND_HEIGHT_MM - dip
     repeat idx from 0 to NUM_LEGS - 1
-        curX[idx] := 0
-        curY[idx] := y + cal.stanceTrimY(idx)
-        curZ[idx] := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM
+        fx, fy, fz := neutralFootTarget(idx)
+        curX[idx] := fx
+        curY[idx] := fy - dip                                 ' dip below this leg's own neutral floor
+        curZ[idx] := fz
     commitCur()
     gesturePhase++
     if bob + 1 >= PUSHUP_FRAMES
