@@ -7,7 +7,8 @@
 '
 '  Run headless (no robot): pnut-ts -d -q src/test_ik.spin2
 '                           pnut-term-ts -r src/test_ik.bin -b 2000000 --headless --end-marker "TEST_DONE"
-'  Expected neutral [0,99,10] (IK frame): a ~ 84, b ~ -46, c ~ 92  (knee bent -> foot reaches down).
+'  Loaded-rear-crouch neutral (IK frame): FRONT [0,95,10] ~ a 84, b -49, c 98 ;
+'  REAR [-12,85,10] ~ c 109 (rear knee more flexed -> deeper fold). Knee bent -> foot reaches down.
 
 CON
   _clkfreq   = 200_000_000
@@ -19,8 +20,8 @@ OBJ
 PUB main()
     waitms(100)
     DEBUG("=== IK dry-run (degrees, IK frame: coxa/femur/tibia) ===")
-    showIK(0, 99, 10)            ' neutral, front/left lateral
-    showIK(0, 99, -10)           ' neutral, back/right lateral
+    showIK(0, 95, 10)            ' FRONT neutral (front/left lateral)
+    showIK(-12, 85, 10)          ' REAR neutral (tucked toward tail, deeper fold)
     showIK(0, 110, 0)            ' straight down, max reach (l2+l3)
     showIK(0, 60, 0)             ' tucked short
     showIK(20, 99, 10)           ' reach forward

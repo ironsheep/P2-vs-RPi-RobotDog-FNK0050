@@ -131,6 +131,14 @@ PUB setCalibration(coxaOffsetDeg, femurOffsetDeg, tibiaOffsetDeg)
     calOffsetFemur := femurOffsetDeg
     calOffsetTibia := tibiaOffsetDeg
 
+PUB setSide(side)
+'' Set just the body-side mirror, with NO channel assignment and NO hardware -- the hardware-free
+'' subset of init() that a host dry-run harness needs to exercise solveServoDegrees() on a bare P2.
+''
+'' @param side - SIDE_LEFT or SIDE_RIGHT (selects the joint-angle mirror)
+
+    bLeftSide := (side == SIDE_LEFT)
+
 PUB setJointAngles(coxaDeg, femurDeg, tibiaDeg) | servoCoxa, servoFemur, servoTibia
 '' Drive the three joints from IK-frame angles, applying the side mirror, trims, and clamps.
 ''
@@ -143,21 +151,7 @@ PUB setJointAngles(coxaDeg, femurDeg, tibiaDeg) | servoCoxa, servoFemur, servoTi
 ' @local servoFemur - physical femur servo angle
 ' @local servoTibia - physical tibia servo angle
 
-    servoCoxa := coxaDeg
-    if bLeftSide
-        servoFemur := FEMUR_MIRROR_DEG - femurDeg
-        servoTibia := tibiaDeg
-    else
-        servoFemur := FEMUR_MIRROR_DEG + femurDeg
-        servoTibia := TIBIA_MIRROR_DEG - tibiaDeg
-
-    servoCoxa += calOffsetCoxa
-    servoFemur += calOffsetFemur
-    servoTibia += calOffsetTibia
-
-    servoCoxa  := COXA_SERVO_MIN  #> servoCoxa  <# COXA_SERVO_MAX   ' per-joint drivable clamp (measured 2026-06-07)
-    servoFemur := FEMUR_SERVO_MIN #> servoFemur <# FEMUR_SERVO_MAX
-    servoTibia := TIBIA_SERVO_MIN #> servoTibia <# TIBIA_SERVO_MAX
+    servoCoxa, servoFemur, servoTibia := ikToServo(coxaDeg, femurDeg, tibiaDeg)
     lastCoxaServo  := servoCoxa                                ' publish for telemetry (getServoAngles)
     lastFemurServo := servoFemur
     lastTibiaServo := servoTibia
@@ -271,6 +265,24 @@ PUB solveIKdegrees(footX, footY, footZ) : aDeg, bDeg, cDeg | thetaZY, aUnits, x4
     bDeg := unitsToDegrees(bUnits)
     cDeg := unitsToDegrees(cUnits)
 
+PUB solveServoDegrees(footX, footY, footZ) : servoCoxa, servoFemur, servoTibia | aDeg, bDeg, cDeg
+'' DRY-RUN: the whole foot-XYZ -> physical-servo-angle pipeline as a PURE function (IK + side mirror +
+'' cal trim + clamp), WITHOUT moving servos. Lets a host harness prove a foot target clamp-safe before
+'' any actuator strains. Drives the same angles moveToXYZ would, minus the writes.
+''
+'' @param footX - foot X target, mm
+'' @param footY - foot Y target, mm
+'' @param footZ - foot Z target, mm
+'' @returns servoCoxa - physical coxa servo angle (deg, post mirror/trim/clamp)
+'' @returns servoFemur - physical femur servo angle (deg, post mirror/trim/clamp)
+'' @returns servoTibia - physical tibia servo angle (deg, post mirror/trim/clamp)
+
+' Local Variables:
+' @local aDeg, bDeg, cDeg - IK-frame coxa/femur/tibia angles (degrees), before the mirror
+
+    aDeg, bDeg, cDeg := solveIKdegrees(footX, footY, footZ)
+    servoCoxa, servoFemur, servoTibia := ikToServo(aDeg, bDeg, cDeg)
+
 PUB lastServoAngles() : coxaDeg, femurDeg, tibiaDeg | uSec
 '' Return the last-COMMANDED servo angles (degrees) for this leg's three joints (diagnostic).
     uSec, coxaDeg  := coxaServo.getPosition()
@@ -318,6 +330,35 @@ PRI unitsToDegrees(angleUnits) : degrees
     degrees := angleUnits +/ ANGLE_UNITS_PER_DEG            ' unsigned divide -> 0..359 (wrapped)
     if degrees > HALF_CIRCLE_DEG
         degrees -= DEGREES_PER_CIRCLE
+
+PRI ikToServo(coxaIK, femurIK, tibiaIK) : servoCoxa, servoFemur, servoTibia
+' Map IK-frame joint angles to physical servo angles: side mirror, then per-joint cal trim, then the
+' drivable clamps. PURE -- no servo writes, no telemetry publish -- so a host dry-run harness can prove
+' a pose clamp-safe without moving hardware. setJointAngles() calls this then writes/publishes;
+' solveServoDegrees() pairs it with the IK for the whole foot-XYZ -> servo pipeline as a pure function.
+'
+' @param coxaIK - coxa (a) angle, IK frame
+' @param femurIK - femur (b) angle, IK frame
+' @param tibiaIK - tibia (c) angle, IK frame
+' @returns servoCoxa - physical coxa servo angle (deg, post mirror/trim/clamp)
+' @returns servoFemur - physical femur servo angle (deg, post mirror/trim/clamp)
+' @returns servoTibia - physical tibia servo angle (deg, post mirror/trim/clamp)
+
+    servoCoxa := coxaIK
+    if bLeftSide
+        servoFemur := FEMUR_MIRROR_DEG - femurIK
+        servoTibia := tibiaIK
+    else
+        servoFemur := FEMUR_MIRROR_DEG + femurIK
+        servoTibia := TIBIA_MIRROR_DEG - tibiaIK
+
+    servoCoxa += calOffsetCoxa
+    servoFemur += calOffsetFemur
+    servoTibia += calOffsetTibia
+
+    servoCoxa  := COXA_SERVO_MIN  #> servoCoxa  <# COXA_SERVO_MAX   ' per-joint drivable clamp (measured 2026-06-07)
+    servoFemur := FEMUR_SERVO_MIN #> servoFemur <# FEMUR_SERVO_MAX
+    servoTibia := TIBIA_SERVO_MIN #> servoTibia <# TIBIA_SERVO_MAX
 
 CON ' ---- License ----
 

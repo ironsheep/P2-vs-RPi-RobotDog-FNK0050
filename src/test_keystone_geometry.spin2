@@ -1,0 +1,141 @@
+'' =================================================================================================
+''   File....... test_keystone_geometry.spin2
+''   Purpose.... SELF-CHECKING DIAGNOSTIC: prove the loaded-rear-crouch NEUTRAL stance is clamp-safe
+''               WITHOUT moving servos. Pure math -- no servos, no I2C, no IMU, no actuator power.
+''               Exercises the REAL engine: dog.neutralFootTarget() + leg.solveServoDegrees().
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Run headless (no robot): pnut-ts -d -q src/test_keystone_geometry.spin2
+'                           pnut-term-ts -r src/test_keystone_geometry.bin -b 2000000 --headless --end-marker "TEST_DONE"
+'
+'  The dog object is instantiated WITHOUT start() -- neutralFootTarget()/neutralFootY() are
+'  start()-independent (CON + committed cal trim only). Each leg's side + per-joint trims are seeded
+'  the hardware-free way (setSide + setCalibration), then the whole foot-XYZ -> servo pipeline runs
+'  as a pure function. PASS means: every servo angle strictly inside its drivable clamp (not pegged),
+'  the rear knees are more flexed than the front (the loaded-crouch conformation), and the rear feet
+'  are tucked toward the tail (rear X < front X). A FAIL here is caught in math, before any servo
+'  strains on the bench -- e.g. a too-deep NEUTRAL_REAR_Y_MM pegging a joint.
+
+CON
+  _clkfreq   = 200_000_000
+  DEBUG_BAUD = 2_000_000
+
+  NUM_LEGS   = 4                    ' leg order 0=FL 1=BL 2=FR 3=BR
+
+OBJ
+  dog : "isp_robot_dog"                                        ' source of the neutral foot targets (no start())
+  leg : "isp_leg"                                              ' the IK -> servo pipeline under test
+  cal : "isp_calibration"                                      ' per-joint + stance trims (same committed DAT dog uses)
+
+VAR
+  long kneeIKByLeg[NUM_LEGS]                                   ' IK-frame tibia (knee) angle per leg -- rear>front check
+  long foreAftByLeg[NUM_LEGS]                                  ' neutral fore/aft (X) target per leg -- rear<front check
+  long failCount                                              ' number of failed checks across the run
+
+PUB main() | idx
+'' Run the keystone geometry dry-run and emit a single PASS/FAIL verdict.
+
+' Local Variables:
+' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
+
+    waitms(100)
+    failCount := 0
+    DEBUG("=== Keystone loaded-rear-crouch geometry dry-run (no servos/I2C/IMU/power) ===")
+    DEBUG("    leg order 0=FL 1=BL 2=FR 3=BR ; front={0,2} rear={1,3} ; left=idx<2")
+
+    repeat idx from 0 to NUM_LEGS - 1
+        checkLeg(idx)
+
+    DEBUG("--- conformation (loaded-rear crouch) ---")
+    checkConformation()
+
+    DEBUG("--- per-leg planted floors (neutralFootY, mm) ---")
+    repeat idx from 0 to NUM_LEGS - 1
+        DEBUG("    leg ", udec_(idx), " neutralFootY=", sdec_(dog.neutralFootY(idx)))
+
+    if failCount == 0
+        DEBUG("RESULT: PASS (all four legs clamp-safe; loaded-rear conformation holds)")
+    else
+        DEBUG("RESULT: FAIL (", udec_(failCount), " check(s) failed)")
+    DEBUG("TEST_DONE")
+    repeat
+
+PRI checkLeg(idx) | side, ending, fx, fy, fz, aDeg, bDeg, cDeg, servoCoxa, servoFemur, servoTibia
+' Seed one leg's side + trims (hardware-free), run the pure foot-XYZ -> servo pipeline for its neutral
+' target, print the result, and assert every servo angle is strictly inside its drivable clamp.
+'
+' @param idx - leg index (0=FL 1=BL 2=FR 3=BR)
+
+' Local Variables:
+' @local side - SIDE_LEFT or SIDE_RIGHT for this leg
+' @local ending - END_FRONT or END_BACK for this leg
+' @local fx, fy, fz - neutral foot target for this leg (mm)
+' @local aDeg, bDeg, cDeg - IK-frame coxa/femur/tibia angles (degrees)
+' @local servoCoxa, servoFemur, servoTibia - physical servo angles (deg, post mirror/trim/clamp)
+
+    side := (idx < 2) ? leg.SIDE_LEFT : leg.SIDE_RIGHT
+    ending := ((idx & 1) == 0) ? leg.END_FRONT : leg.END_BACK
+    leg.setSide(side)
+    leg.setCalibration(cal.legTrims(side, ending))
+
+    fx, fy, fz := dog.neutralFootTarget(idx)
+    aDeg, bDeg, cDeg := leg.solveIKdegrees(fx, fy, fz)
+    servoCoxa, servoFemur, servoTibia := leg.solveServoDegrees(fx, fy, fz)
+    kneeIKByLeg[idx] := cDeg
+    foreAftByLeg[idx] := fx
+
+    DEBUG("  leg ", udec_(idx), " XYZ(", sdec_(fx), ",", sdec_(fy), ",", sdec_(fz), ")  IK a=", sdec_(aDeg), ...
+          " b=", sdec_(bDeg), " c=", sdec_(cDeg), "  servo coxa=", sdec_(servoCoxa), " femur=", sdec_(servoFemur), ...
+          " tibia=", sdec_(servoTibia))
+
+    assertInside(string("coxa"),  idx, servoCoxa,  leg.COXA_SERVO_MIN,  leg.COXA_SERVO_MAX)
+    assertInside(string("femur"), idx, servoFemur, leg.FEMUR_SERVO_MIN, leg.FEMUR_SERVO_MAX)
+    assertInside(string("tibia"), idx, servoTibia, leg.TIBIA_SERVO_MIN, leg.TIBIA_SERVO_MAX)
+
+PRI assertInside(pJointStr, idx, servoDeg, loDeg, hiDeg)
+' Assert a servo angle is STRICTLY inside its drivable clamp (not pegged); count + report a failure.
+'
+' @param pJointStr - joint name for the message ("coxa"/"femur"/"tibia")
+' @param idx - leg index (0=FL 1=BL 2=FR 3=BR)
+' @param servoDeg - physical servo angle to check (degrees)
+' @param loDeg - drivable clamp minimum (degrees)
+' @param hiDeg - drivable clamp maximum (degrees)
+
+    if not ((servoDeg > loDeg) and (servoDeg < hiDeg))
+        failCount++
+        DEBUG("    FAIL leg ", udec_(idx), " ", zstr_(pJointStr), " servo ", sdec_(servoDeg), " pegged at clamp [", sdec_(loDeg), "..", sdec_(hiDeg), "]")
+
+PRI checkConformation()
+' Cross-leg checks that the stance is a loaded-rear crouch: rear knees more flexed than the front,
+' and rear feet tucked toward the tail. Compared per side (left BL/FL, right BR/FR) so the side
+' mirror never enters -- these run on the side-independent IK-frame angle and the neutral X target.
+
+    assertRearKnee(1, 0)                                       ' BL rear vs FL front (left)
+    assertRearKnee(3, 2)                                       ' BR rear vs FR front (right)
+    assertRearTuck(1, 0)
+    assertRearTuck(3, 2)
+
+PRI assertRearKnee(rearIdx, frontIdx)
+' Assert the rear knee is more flexed than the front (larger IK-frame tibia angle = deeper fold).
+'
+' @param rearIdx - rear leg index
+' @param frontIdx - front leg index (same body side)
+
+    if kneeIKByLeg[rearIdx] > kneeIKByLeg[frontIdx]
+        DEBUG("    ok rear knee leg ", udec_(rearIdx), " c=", sdec_(kneeIKByLeg[rearIdx]), " > front leg ", udec_(frontIdx), " c=", sdec_(kneeIKByLeg[frontIdx]))
+    else
+        failCount++
+        DEBUG("    FAIL rear knee leg ", udec_(rearIdx), " c=", sdec_(kneeIKByLeg[rearIdx]), " not deeper than front leg ", udec_(frontIdx), " c=", sdec_(kneeIKByLeg[frontIdx]))
+
+PRI assertRearTuck(rearIdx, frontIdx)
+' Assert the rear foot is tucked toward the tail: rear fore/aft target less than the front's.
+'
+' @param rearIdx - rear leg index
+' @param frontIdx - front leg index (same body side)
+
+    if foreAftByLeg[rearIdx] < foreAftByLeg[frontIdx]
+        DEBUG("    ok rear tuck leg ", udec_(rearIdx), " x=", sdec_(foreAftByLeg[rearIdx]), " < front leg ", udec_(frontIdx), " x=", sdec_(foreAftByLeg[frontIdx]))
+    else
+        failCount++
+        DEBUG("    FAIL rear tuck leg ", udec_(rearIdx), " x=", sdec_(foreAftByLeg[rearIdx]), " not < front leg ", udec_(frontIdx), " x=", sdec_(foreAftByLeg[frontIdx]))
