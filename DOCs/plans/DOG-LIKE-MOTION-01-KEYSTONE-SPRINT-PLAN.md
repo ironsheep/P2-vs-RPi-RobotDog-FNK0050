@@ -303,4 +303,22 @@ returns to the **new** loaded crouch (not the old square stance).
 - **Exact crouch magnitudes** — the four `NEUTRAL_*` CONs are starting values; tuned from the
   §3 readback (§1, §7).
 
+## Section ↔ task cross-reference (`plan-to-tasks` 2026-06-09, tag `dlm01-keystone`)
+
+Implementation order (`seq`) is foundational→dependent with the rework-analysis swap of §6
+before §5 — the code audit runs before the doc backport so an audit-driven rename does not
+force doc rework.
+
+| Plan § | Deliverable                                            | Task   | seq | est    |
+| ------ | ------------------------------------------------------ | ------ | --- | ------ |
+| §1     | `neutralFootTarget()`/`neutralFootY()` + crouch CONs   | «#13»  | 1   | 1h30m  |
+| §3     | `ikToServo`/`solveServoDegrees` + geometry harness     | «#14»  | 2   | 2h30m  |
+| §2     | Per-leg gait planted-Y floor + dependent oscillators   | «#15»  | 3   | 2h00m  |
+| §4     | Zero stale leveling trim + re-measure (lateral-sign)   | «#16»  | 4   | 1h00m  |
+| §6     | Coding-style audit + `/code-review` on final diff      | «#17»  | 5   | 1h00m  |
+| §5     | Documentation backport                                 | «#18»  | 6   | 2h00m  |
+| §7     | Bench verification playbook gate (hardware)            | «#19»  | 7   | 1h30m  |
+
+Total estimated effort ≈ 11h30m.
+
 _No open questions block this plan — code research is complete and the questions pass is empty._
