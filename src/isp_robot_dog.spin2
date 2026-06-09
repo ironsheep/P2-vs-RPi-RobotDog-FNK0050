@@ -71,9 +71,16 @@ CON ' ---- mode states (telemetry) ----
   #0, MODE_IDLE, MODE_GAITING, MODE_GESTURE_BUSY, MODE_RELAXED, MODE_LOWBATT
 
 CON ' ---- geometry, gait & gesture tuning (mm / degrees) ----
-  STAND_HEIGHT_MM     = 99          ' neutral foot extension (Freenove default)
+  STAND_HEIGHT_MM     = 99          ' tall stand reference (Freenove default); SIT/BOW/PARADE sub-poses only
   PARADE_HEIGHT_MM    = 120         ' tall, near-vertical legs for PARADE REST -- low holding torque (bench-tune)
   STANCE_LATERAL_MM   = 10          ' foot lateral offset (left +, right -)
+  ' Loaded-rear-crouch NEUTRAL stance (the single foundation poses ease to/from and gaits oscillate
+  ' around -- see neutralFootTarget()). Front a touch flexed, rear folded deeper + tucked toward the
+  ' tail for a ~60:40 front weight bias. Smaller Y = more fold. All four are bench-tune knobs.
+  NEUTRAL_FRONT_Y_MM  = 95          ' front foot extension (elbow/shoulder flex)               -- bench-tune
+  NEUTRAL_REAR_Y_MM   = 85          ' rear foot extension, folds deeper (the loaded hindquarter) -- bench-tune
+  NEUTRAL_FRONT_X_MM  = 0           ' front feet under the shoulders                            -- bench-tune
+  NEUTRAL_REAR_X_MM   = -12         ' rear feet tucked toward tail (60:40 load bias, femur ~90)  -- bench-tune
   RELAX_X_MM          = 55          ' tucked rest pose (Freenove relax point)
   RELAX_HEIGHT_MM     = 78
   SIT_FRONT_HEIGHT_MM = 60          ' front legs shortened to sit back
@@ -400,6 +407,34 @@ PUB getLegServoAngles(legIdx) : coxaDeg, femurDeg, tibiaDeg
     coxaDeg  := legCoxaDeg[legIdx]                            ' plain DAT read (no cross-cog sub-object call)
     femurDeg := legFemurDeg[legIdx]
     tibiaDeg := legTibiaDeg[legIdx]
+
+PUB neutralFootTarget(idx) : fx, fy, fz | front
+'' Neutral loaded-rear-crouch foot target for one leg (mm): the single source of truth that poses
+'' ease to/from and gaits oscillate around. start()-independent -- reads CON + committed cal trim
+'' only, so host dry-run harnesses can call it WITHOUT bringing up the backend cog. Keep it that way.
+''
+'' @param idx - leg index 0=FL 1=BL 2=FR 3=BR
+'' @returns fx - fore/aft target, mm (front under the shoulders, rear tucked toward the tail)
+'' @returns fy - foot extension, mm (rear folds deeper than front), incl. per-leg leveling trim
+'' @returns fz - lateral target, mm (left legs +, right legs -)
+
+' Local Variables:
+' @local front - TRUE for the front legs (FL/FR), FALSE for the rear (BL/BR)
+
+    front := (idx & 1) == 0                                   ' FL(0)/FR(2) front; BL(1)/BR(3) rear
+    fx := front ? NEUTRAL_FRONT_X_MM : NEUTRAL_REAR_X_MM
+    fy := neutralFootY(idx)                                   ' single planted-floor source (folds the cal trim)
+    fz := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM
+
+PUB neutralFootY(idx) : fy
+'' Neutral planted-floor foot extension for one leg (mm) -- the per-leg Y a gait swings up from and
+'' clamps back down to. start()-independent (CON + committed cal trim only); see neutralFootTarget().
+''
+'' @param idx - leg index 0=FL 1=BL 2=FR 3=BR
+'' @returns fy - foot extension, mm (rear folds deeper than front), incl. per-leg leveling trim
+
+    fy := ((idx & 1) == 0) ? NEUTRAL_FRONT_Y_MM : NEUTRAL_REAR_Y_MM
+    fy += cal.stanceTrimY(idx)
 
 PUB getHead() : curDeg, tgtDeg
 '' Head pan current + target angle, degrees.
@@ -751,15 +786,23 @@ PRI setGaitSpeed(speedArg)
     else
         gaitStepDeg := GAIT_STEP_DEG
 
-PRI leadGaitNeutral() | e, idx
+PRI leadGaitNeutral() | e, idx, fx, fy, fz
 ' Gait lead-in: ease all feet from the start pose to the neutral gait stance, so a gait BEGINS from
 ' rest instead of snapping (covers pose->gait and gait->gait changes -- the "stop, then start" feel).
+' Eases to the loaded-rear-crouch neutral (neutralFootTarget); the first walking frame then
+' re-centres stride X to 0 (the walking trajectory is X=0-centred -- see the gait routines).
+'
+' Local Variables:
+' @local e - eased 0..1 interpolation factor for this lead-in frame
+' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
+' @local fx, fy, fz - neutral foot target for this leg (mm)
 
     e := easeFactor(GAIT_LEADIN_FRAMES - gaitLeadin + 1, GAIT_LEADIN_FRAMES)
     repeat idx from 0 to NUM_LEGS - 1
-        curX[idx] := lerpFix(startX[idx], 0, e)
-        curY[idx] := lerpFix(startY[idx], STAND_HEIGHT_MM + cal.stanceTrimY(idx), e)
-        curZ[idx] := lerpFix(startZ[idx], (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM, e)
+        fx, fy, fz := neutralFootTarget(idx)
+        curX[idx] := lerpFix(startX[idx], fx, e)
+        curY[idx] := lerpFix(startY[idx], fy, e)
+        curZ[idx] := lerpFix(startZ[idx], fz, e)
     commitCur()
     gaitLeadin--
 
@@ -1280,18 +1323,19 @@ PRI lerpFix(fromVal, toVal, e) : val
 
     val := fromVal + (((toVal - fromVal) * e) / EASE_ONE)
 
-PRI setLevelStandTargets() | idx, lateralZ
-' Set the four neutral-stand foot targets, folding each leg's static leveling trim into footY so
-' the body stands level. The per-leg deltas come from isp_calibration.stanceTrimY() and are 0 until
-' the neutral tilt is metered (src/test_dog_level.spin2) -> stance is unchanged until then.
+PRI setLevelStandTargets() | idx, fx, fy, fz
+' Set the four neutral-stand foot targets from the single loaded-rear-crouch source of truth
+' (neutralFootTarget), which folds each leg's static leveling trim into footY so the body stands
+' level. The per-leg trim deltas are 0 until the neutral tilt is metered (src/test_dog_level.spin2)
+' -> stance is the raw crouch geometry until then.
 '
 ' Local Variables:
 ' @local idx - leg index (0=FL 1=BL 2=FR 3=BR)
-' @local lateralZ - lateral stance for this leg (left legs +, right legs -)
+' @local fx, fy, fz - neutral foot target for this leg (mm)
 
     repeat idx from 0 to NUM_LEGS - 1
-        lateralZ := (idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM   ' FL/BL left, FR/BR right
-        setLegTarget(idx, 0, STAND_HEIGHT_MM + cal.stanceTrimY(idx), lateralZ)
+        fx, fy, fz := neutralFootTarget(idx)                  ' rear eases to NEUTRAL_REAR_X_MM, not 0
+        setLegTarget(idx, fx, fy, fz)
 
 PRI setLegTargets(footX, footY, leftZ, rightZ)
 ' Set all four foot targets: left legs (FL/BL) to leftZ, right legs (FR/BR) to rightZ.
