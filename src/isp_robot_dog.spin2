@@ -691,7 +691,7 @@ PRI advanceGait() | aUnits, bUnits
     commitCur()
     advanceGaitPhase()
 
-PRI plantFloor(idx, liftMm) : footY
+PRI plantFloor(idx, liftMm) : footY | floorY
 ' Per-leg gait planted-Y floor: swing the foot up by liftMm off THIS leg's neutral floor, clamped so
 ' it never extends past that floor (feet lift UP from the loaded crouch, never push below it). Front
 ' and rear neutral floors differ, so each foot in a mixed diagonal pair must get its OWN floor.
@@ -700,7 +700,11 @@ PRI plantFloor(idx, liftMm) : footY
 ' @param liftMm - this frame's swing offset (qsin), mm
 ' @returns footY - planted/lifted foot extension for this leg (mm)
 
-    footY := (neutralFootY(idx) + liftMm) <# neutralFootY(idx)
+' Local Variables:
+' @local floorY - this leg's neutral planted floor (mm), evaluated once
+
+    floorY := neutralFootY(idx)
+    footY := (floorY + liftMm) <# floorY
 
 PRI gaitLinearFwd(aUnits, bUnits) | strideXA, liftA, strideXB, liftB
 ' Forward/backward trot: X = 12*cos(phase) stride, Y = per-leg neutral floor + 6*sin(phase) lift.
