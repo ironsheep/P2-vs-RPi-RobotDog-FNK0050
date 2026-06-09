@@ -327,13 +327,23 @@ The §6.1 guide is realized in `src/isp_robot_dog.spin2`. What the engine actual
   Diagonal pairs A={FL,BR}, B={BL,FR} 180° apart; sinusoid is already smooth so no easing is layered
   on. `startGait(kind,dir,speedArg)` latches the mode and signed phase step; `setGaitSpeed` applies
   the **arg0 speed knob** (`0`=default `GAIT_STEP_DEG=15`, else clamp `3..45`). Mapped onto the
-  verified neutral (X=0, Z=±`STANCE_LATERAL_MM`); Freenove's absolute offsets are **not** applied.
+  loaded-rear-crouch neutral: stride X stays centred on 0 (Z=±`STANCE_LATERAL_MM`), and each foot's
+  lift is clamped to its **own** planted floor — `plantFloor(idx,lift)` swings up off
+  `neutralFootY(idx)` (front 95 / rear 85), so the front-vs-rear height split survives walking
+  instead of collapsing to one shared height. Freenove's absolute offsets are **not** applied.
 - **Hello gesture.** `advanceHello()` eases the FR foot out over `HELLO_LEADIN_FRAMES=8` (no start
   snap), oscillates with the `qsin` wave, then `finishGesture()` eases back to stand. `busyFlag`
   reject-while-busy preserved (D3).
-- **Static leveling.** The neutral stand folds in per-leg foot-Y trims from
-  `isp_calibration.stanceTrimY()` (`setLevelStandTargets`, used by `standPose` and `seedStand`).
-  See [`spec/P2-RobotDog-Specifications.md`](spec/P2-RobotDog-Specifications.md) §5.
+- **Neutral stance (single source of truth).** Poses and gaits share one neutral — the **loaded-rear
+  crouch** — through `neutralFootTarget(idx)` → `(fx,fy,fz)` (and `neutralFootY(idx)` for just the
+  planted floor). Front feet stand at `NEUTRAL_FRONT_Y_MM=95`/X=0; rear feet fold deeper to
+  `NEUTRAL_REAR_Y_MM=85` and tuck back to `NEUTRAL_REAR_X_MM=−12` for a ~60:40 forward weight bias.
+  The gait lead-in, the HELLO lean-out, and the push-up lead-in all reach it the same way
+  (`easeAllToNeutral`); `STAND_HEIGHT_MM=99` is now only the *tall* SIT/BOW/PARADE reference. See
+  [`spec/P2-RobotDog-Specifications.md`](spec/P2-RobotDog-Specifications.md) §2.2.
+- **Static leveling.** `neutralFootTarget` folds each leg's foot-Y trim from
+  `isp_calibration.stanceTrimY()` into the crouch (`setLevelStandTargets`, used by `standPose` and
+  `seedStand`). See [`spec/P2-RobotDog-Specifications.md`](spec/P2-RobotDog-Specifications.md) §5.
 - **Power-on.** `seedStand()` snaps to neutral once (no prior pose to blend from) — the only snap.
 
 > The engine owns interpolation at the **body** level; the per-servo S-curve slew in

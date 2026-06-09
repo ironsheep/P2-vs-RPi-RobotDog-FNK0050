@@ -69,10 +69,26 @@ no snaps, no gaps.
 - **Reachability guard** scales any out-of-range foot back onto the reachable shell; the 0–180°
   servo-angle clamp in `isp_leg` is the belt-and-suspenders second line.
 
-### 2.2 Verified neutral stance
+### 2.2 Neutral stance — the loaded-rear crouch
 
-All trajectories are mapped onto **our hardware-verified neutral**: foot **X = 0**, **Z = ±10 mm**
-(`STANCE_LATERAL_MM`, left +, right −), **Y = 99 mm** (`STAND_HEIGHT_MM`). Freenove's absolute
+All trajectories are mapped onto a single **loaded-rear-crouch neutral** — the one source of truth
+every pose eases to/from and every gait oscillates around, exposed by `neutralFootTarget(idx)` (and
+`neutralFootY(idx)` for just the per-leg planted floor). It is **per-leg**, not one shared height:
+
+| Legs | Foot X | Foot Y (extension) | Foot Z |
+|------|--------|--------------------|--------|
+| Front (FL/FR) | `NEUTRAL_FRONT_X_MM = 0` (under the shoulders) | `NEUTRAL_FRONT_Y_MM = 95` | ±`STANCE_LATERAL_MM = 10` (L +, R −) |
+| Rear (BL/BR) | `NEUTRAL_REAR_X_MM = −12` (tucked toward the tail) | `NEUTRAL_REAR_Y_MM = 85` (folds deeper) | ±`STANCE_LATERAL_MM` |
+
+The rear folds deeper (smaller Y) and tucks back (−X) against the `HALF_BODY_LENGTH_MM = 136` lever to
+bias the weight **~60:40 forward** — a visibly loaded hindquarter, the dog-like resting crouch. All
+four `NEUTRAL_*` are bench-tune knobs. `neutralFootTarget` folds each leg's static leveling trim
+(`cal.stanceTrimY`) into Y, so it returns the level-corrected target. **Bench pitch decision (open):**
+the crouch is meant to sit a touch nose-up; at leveling re-measure we either keep that intended
+nose-up (leave the pitch trim ≈ 0) or flatten it (paste the measured pitch) — see §5.
+
+`STAND_HEIGHT_MM = 99` is **no longer the neutral** — it is retained only as the *tall* stand
+reference for the deliberately-tall sub-poses (SIT front, BOW rear, PARADE REST). Freenove's absolute
 `changeCoordinates` offsets (+10 X, ±10 Z) are **not** applied — only its trajectory amplitudes and
 phase shapes are ported.
 
@@ -82,8 +98,11 @@ phase shapes are ported.
 
 All gaits are **trotting**: diagonal pairs **A = {FL, BR}** and **B = {BL, FR}** run 180° out of
 phase. Each is a **latched mode** (D1) — one command sustains it until `CMD_STOP` or another
-command. Trajectories are ported from `REF/.../Control.py` onto the verified neutral (§2.2); foot
-lift is clamped to `Y ≤ STAND_HEIGHT_MM`.
+command. Trajectories are ported from `REF/.../Control.py` onto the loaded-rear-crouch neutral
+(§2.2); each foot's lift is clamped to its **own** planted floor (`Y ≤ neutralFootY(idx)` via
+`plantFloor`), so a mixed diagonal pair keeps the front-vs-rear height difference while walking.
+Stride X stays centred on 0 (the rear −X tuck is a static-neutral property, not part of the walking
+trajectory).
 
 | Gait | Command | Trajectory (per foot) | Amplitudes |
 |------|---------|-----------------------|------------|
@@ -94,6 +113,10 @@ lift is clamped to `Y ≤ STAND_HEIGHT_MM`.
 | Step left | `CMD_STEP_LEFT` | X = 0, Z = A·cos(φ) added to lateral, Y = L·sin(φ)+h | Z `STEP_Z_AMPL_MM=10`, lift `STEP_LIFT_MM=5` |
 | Step right | `CMD_STEP_RIGHT` | same shape, phase **decrements** | same as step-left |
 
+> Each `Y = L·sin(φ)+h` uses **h = that leg's `neutralFootY(idx)`** (front 95 / rear 85, plus the
+> leveling trim) — the per-leg planted floor, not one shared height; `plantFloor` clamps each foot to
+> its own floor.
+>
 > ⚠ bench — the turn XZ amplitude (3 mm) is small but faithful to the reference; tune on the bench.
 
 ### Speed knob
@@ -250,7 +273,7 @@ Backend-owned (D2), independent of frontend commands. **Two tiers:**
 
 ---
 
-## 7. Constants reference (build 0.1.2)
+## 7. Constants reference (build 0.2.0)
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
@@ -258,7 +281,9 @@ Backend-owned (D2), independent of frontend commands. **Two tiers:**
 | `EASE_ONE` | 4096 | fixed-point 1.0 for ease/lerp |
 | `POSE_FRAMES` / `HEAD_FRAMES` | 30 / 20 | eased pose / head-pan duration |
 | `REACH_MIN_MM` / `REACH_MAX_MM` | 25 / 130 | reachability guard |
-| `STAND_HEIGHT_MM` | 99 | neutral foot extension |
+| `NEUTRAL_FRONT_Y_MM` / `NEUTRAL_REAR_Y_MM` | 95 / 85 | loaded-rear-crouch neutral foot extension (front / deeper-folded rear) — §2.2 |
+| `NEUTRAL_FRONT_X_MM` / `NEUTRAL_REAR_X_MM` | 0 / −12 | neutral fore/aft (front under shoulders / rear tucked back → ~60:40 forward bias) — §2.2 |
+| `STAND_HEIGHT_MM` | 99 | *tall* stand reference for SIT/BOW/PARADE sub-poses — **no longer the gait/pose neutral** (§2.2) |
 | `STANCE_LATERAL_MM` | 10 | foot lateral offset (L +, R −) |
 | `RELAX_X_MM` / `RELAX_HEIGHT_MM` | 55 / 78 | tucked rest pose |
 | `SIT_FRONT_HEIGHT_MM` | 60 | sit: rear lowered |

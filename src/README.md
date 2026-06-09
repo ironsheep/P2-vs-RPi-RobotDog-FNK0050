@@ -134,8 +134,14 @@ role from that identity.
   FL/BL/FR/BR), an ease-in/out smoothstep, per-frame reachability guard, and blend-from-current —
   so all 13 joints share one timebase and start/arrive together (no per-servo slew, no snaps). It
   drives the **full gait catalog** (forward/backward, turn L/R, sidestep L/R; trotting diagonals
-  with an `arg0` speed knob) and folds in the **IMU static-leveling** stance trim
-  (`isp_calibration.stanceTrimY`). The behavioral contract is specified in
+  with an `arg0` speed knob). All poses and gaits share one neutral — the **loaded-rear crouch** —
+  through a single source of truth, `neutralFootTarget(idx)` / `neutralFootY(idx)`: front feet at
+  `NEUTRAL_FRONT_Y_MM=95`, rear folded deeper to `NEUTRAL_REAR_Y_MM=85` and tucked back
+  (`NEUTRAL_REAR_X_MM=−12`) for a ~60:40 forward bias. Gaits clamp each foot's lift to its **own**
+  per-leg planted floor (`plantFloor`), so the front/rear height split survives walking;
+  `STAND_HEIGHT_MM=99` is retained only as the *tall* SIT/BOW/PARADE reference. The neutral folds in
+  the **IMU static-leveling** stance trim (`isp_calibration.stanceTrimY`). The behavioral contract is
+  specified in
   [`../DOCs/spec/P2-RobotDog-Specifications.md`](../DOCs/spec/P2-RobotDog-Specifications.md); the
   as-built engine is ToOps §6.2.
 - **The three cogs are assembled in `isp_robot_dog_top`** — it `cogspin`s the backend (I²C, mailbox
