@@ -51,12 +51,13 @@ clamp-safety is proven in math before any servo strains on the bench. This honou
 [[production-path-testing]] — the harness exercises the **real** engine math, not a copy.
 
 **Entry prerequisites (sequenced before execution — not in this plan's scope).** Keystone
-executes only after **(a)** bench certification is **functional-green** on the P2 unit, and
-**(b)** the **non-singleton I2C cutover is complete** — keystone's new §3 harness and all
-object construction target the **new** driver. Rationale: don't stack an infra swap under a
-behaviour change (bisectability), and write the new geometry harness **once** against the
-final object/I2C-seeding pattern. Sequence: **baseline cert** (current singleton driver) →
-**I2C cutover** → **re-cert** (same control-panel sweep, diff the log) → **keystone execution**.
+executes after bench certification is **functional-green** on the P2 unit (achieved: BENCH-REPAIRS-01
+closed, 0.1.2 tagged, F1–F8 bench-verified). **No I2C cutover precedes this sprint.** Per the
+2026-06-08 sequencing decision, **bus 1 stays the DAT singleton** (PCA9685/ADS7830/MPU6050, backend
+cog) and is **never migrated**; the non-singleton/var-owner I2C driver is built only for the **new
+voice bus** in the voice-recognition sprint (sequenced **last**). The §3 harness and all object
+construction therefore target the **current singleton** driver — there is no infra swap stacked under
+this behaviour change. See memory [[voice-integration-design]] and [[project-status]].
 
 ---
 
@@ -279,8 +280,21 @@ returns to the **new** loaded crouch (not the old square stance).
 - Bench harnesses `test_dog_stand/level/gaits.spin2` — verification (§7)
 
 ## Process notes (not silently skipped)
-- **Version bump** (`src/isp_version.spin2`, currently 0.1.1) is set by `sprint-start`.
+- **Build version: `0.2.0`** — agreed at `sprint-start` 2026-06-09 (MINOR bump from 0.1.2:
+  new loaded-rear-crouch neutral, opens the Dog-Like-Motion arc). Set in `src/isp_version.spin2`.
 - **Release notes** (`DOCs/RELEASE-NOTES.md`) are authored by `build-wrapup` at closeout.
+
+## Entry checks (sprint-start 2026-06-09)
+
+- **Working tree:** clean; `src/` fully committed (HEAD `7583c95`). Only sprint-start's own
+  edits pending (this plan + version bump) — committed as the sprint-start foundation commit.
+- **Tracking-readiness:** **READY.** Task board empty; context = 1 live key
+  (`sprint_resume_keystone_next`, the current resume pointer); `MEMORY.md` ~8 lines; no drift,
+  nothing to prune.
+- **Entry baseline (baseline-health):** compile-all sweep over `src/*.spin2` — **42/42 green, 0
+  fail** (matches the 0.1.2 closeout baseline; version bump is an edit, not a new file). No failures
+  to triage. This is the exit baseline `sprint-closeout` checks against; no regression permitted at
+  closeout. New §3 harness `test_keystone_geometry.spin2` will raise the count to 43 when added.
 
 ## Open decisions (carried to the bench, not blocking)
 
