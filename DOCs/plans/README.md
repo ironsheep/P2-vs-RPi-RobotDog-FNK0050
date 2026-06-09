@@ -13,9 +13,10 @@ it executes against, and the running punch list. Completed/superseded plans move
 
 | File | What it is |
 |------|------------|
-| [`HARDWARE-CERTIFICATION-SPRINT-PLAN.md`](HARDWARE-CERTIFICATION-SPRINT-PLAN.md) | Current sprint — hardware certification + the 0.1.2 baseline: scope, verification model, and the work to certify the port on the bench unit. |
-| [`SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`](SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md) | The bench-verification playbook — the headless run recipe and the ordered exercises that prove each motion behavior on hardware. |
 | [`PUNCH-LIST.md`](PUNCH-LIST.md) | Running list of small open/deferred items (e.g. LED gamma correction). |
+
+_No active sprint plan — the **Dog-Like-Motion-01 Keystone** sprint closed at build 0.2.0 (2026-06-09)
+and is in [`archive/`](archive/). Next up: the voice-recognition sprint (not yet planned)._
 
 ### Archive
 

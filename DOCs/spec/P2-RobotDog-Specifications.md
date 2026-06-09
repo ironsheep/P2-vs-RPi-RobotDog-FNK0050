@@ -35,7 +35,7 @@ cog 0 drives the robot **only** through two hub mailboxes — never by touching 
 - **Mailbox B → IO** (`isp_io_controller`): LED ring, buzzer, ultrasonic ranging; reports distance,
   ping sequence, LED-busy.
 
-`src/isp_robot_dog_top.spin2` is the first object to assemble all three cogs; it runs a scripted
+`src/robot_dog_top.spin2` is the first object to assemble all three cogs; it runs a scripted
 demo orchestrator (a stand-in until the real Wi-Fi/serial command link is built).
 
 ---
@@ -206,12 +206,12 @@ color is posted); `RAINBOW`/`RAINBOW_CYCLE` self-color via the wheel.
 | `isLedBusy()` | TRUE while an animated LED mode runs |
 
 > ⚠ bench — the IO cog's **non-blocking smart-pin ranging path** (`startSmart`/`firePing`/
-> `echoReadyMm`) is first exercised integrated by `isp_robot_dog_top`; previously only the blocking
+> `echoReadyMm`) is first exercised integrated by `robot_dog_top`; previously only the blocking
 > menu path ran. Confirm live ranging (fresh `pingSeq`) on the bench.
 
 ### 4.3 Three-cog launch
 
-`isp_robot_dog_top.main()` runs on cog 0 and:
+`robot_dog_top.main()` runs on cog 0 and:
 
 1. `cogspin` **IO** → cog 2: `io.start(WS2812=8, BUZZER=10, TRIG=11, ECHO=9)` (owns no bus → alive
    immediately).

@@ -4,6 +4,51 @@ User-facing summary of each firmware build. Newest at the top.
 
 ---
 
+## 0.2.0 — 2026-06-09
+
+Closes the **Dog-Like-Motion-01 Keystone** sprint — the dog's resting stance was rebuilt so poses and
+walking all grow from one consistent shape, and the bench pass that proved it fixed two things that
+looked wrong.
+
+**The new resting stance**
+
+- **A natural "loaded" crouch.** At rest the dog now settles into a single, consistent stance — the
+  hindquarters carry a bit more and tuck slightly back, the front stands a touch taller — and every
+  pose and gait now eases to and from that same shape instead of a flat, square box. Measured on the
+  bench, it stands **level**.
+
+**What works now that didn't before**
+
+- **Salute.** The dog now **salutes standing at attention** instead of from a sit — it shifts its
+  weight, raises the front-right paw, holds, and lowers, all without tipping over. (Before, the salute
+  could tip toward the raised paw.)
+- **Shake** still offers its paw from a seated position, and settles back level when done.
+- **Lie down.** Reworked into a clean **low, flat rest** — the dog sits low and level with its paws
+  flat on the ground (the earlier version tilted nose-up and lifted the front paws off the floor).
+- **Walking.** Each leg keeps its own foot height while walking, so the rear stays lower than the front
+  through the whole gait instead of flattening out mid-stride. All six gaits and the speed control run
+  smoothly and ease cleanly to a stop.
+
+**Confirmed on the bench**
+
+- The tilt sensor's **left/right direction** was verified by hand-tilting the dog — leaning left reads
+  positive, as intended. Combined with the earlier front/back check, both tilt axes are now trusted.
+- The resting stance measures **level**, so no leveling trim is applied.
+
+**Naming**
+
+- The integrated demo program was renamed from `isp_robot_dog_top` to **`robot_dog_top`** so the
+  top-level app is clearly distinct from the internal building-block modules.
+
+**Known / not yet verified**
+
+- The new low **lie-down** is proven safe and was checked in the geometry self-test, but its final
+  on-robot look is a quick visual confirm on the next flash.
+- A noticeably *lower* lie-down (belly near the floor) is limited by one leg's calibration and would
+  need that leg re-trimmed — a separate bench task.
+
+---
+
 ## 0.1.2 — 2026-06-08
 
 First tagged build. Closes the **Bench-Repairs-01** sprint — a round of fixes to how the dog poses,

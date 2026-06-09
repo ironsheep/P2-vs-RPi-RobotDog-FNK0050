@@ -9,7 +9,7 @@ owns the object/tier map.
 
 > Status: **as-built for build 0.1.1; bench verification pending.** All Tier 1–4 objects exist in
 > `src/` and compile clean (PNut-ts). The three-cog wiring **is now assembled** —
-> `src/isp_robot_dog_top.spin2` `cogspin`s the backend (cog 1) and the IO cog (cog 2) and runs a
+> `src/robot_dog_top.spin2` `cogspin`s the backend (cog 1) and the IO cog (cog 2) and runs a
 > scripted orchestrator on cog 0 over mailboxes A + B (the real Wi-Fi/serial command link is still
 > deferred). The IO cog's **smart-pin ultrasonic + non-blocking buzzer + frame-stepped LED** are
 > built and launched. The smooth-motion engine + full gait catalog + IMU static leveling are
@@ -66,7 +66,7 @@ mailbox from the comms cog. Cogs 3–7 are spare. With cooperative tasks (§3) w
 to spend a cog per concurrent activity, so we have ample headroom (e.g. a future
 behavior/autonomy cog).
 
-> **As-built (build 0.1.1):** `src/isp_robot_dog_top.spin2` realizes this map — cog 0 runs its
+> **As-built (build 0.1.1):** `src/robot_dog_top.spin2` realizes this map — cog 0 runs its
 > `main()`/scripted orchestrator, `cogspin`s `isp_robot_dog.start(13,15)` onto cog 1 and
 > `isp_io_controller.start(8,10,11,9)` onto cog 2. This is the **first launch of the IO cog**. Cog
 > 0 is presently a scripted demo, not yet the real Wi-Fi/serial command link.
@@ -427,7 +427,7 @@ Each stage **builds on the last**: the engine (1) is the fluid substrate; the mo
 - ✅ **IO-cog refactors + launch** — `isp_hcsr04` has a non-blocking **smart-pin** ranging path
   (`startSmart`/`firePing`/`echoReadyMm`), the buzzer is non-blocking (auto-off tick), and the LED
   is frame-stepped — all three multiplex on `isp_io_controller` (per D7). The **top-level cog
-  launch + mailbox B are assembled** in `src/isp_robot_dog_top.spin2` (the comms loop is still a
+  launch + mailbox B are assembled** in `src/robot_dog_top.spin2` (the comms loop is still a
   scripted demo, not the real link).
 
 **Still to verify on the bench (see the verification playbook):**

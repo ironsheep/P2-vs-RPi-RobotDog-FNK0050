@@ -1,15 +1,16 @@
 {Spin2_v47}
 '' =================================================================================================
 ''   File....... test_dog_tricks.spin2
-''   Purpose.... TRICKS bench scenario in the PRODUCTION 3-cog shape: SIT, SHAKE (offer right paw),
-''               SALUTE (right paw up). Launches both service cogs (cog1 backend/I2C, cog2 IO) and
-''               drives the poses/gestures through mailbox A, dumping per-leg diagnostics at each step.
-''               Poses wait on the move-complete edge; gestures wait on the busy flag.
+''   Purpose.... TRICKS bench scenario in the PRODUCTION 3-cog shape: SIT, SHAKE (SEATED, offer right
+''               paw), SALUTE (STANDING at attention, right paw up). Launches both service cogs (cog1
+''               backend/I2C, cog2 IO) and drives the poses/gestures through mailbox A, dumping per-leg
+''               diagnostics at each step. Poses wait on the move-complete edge; gestures on the busy flag.
 ''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
 '' =================================================================================================
 '
-'  >> LIFT/SUPPORT THE ROBOT << on launch (gyro cal, then it GLIDES up to stand). Shake/salute SIT
-'  first (stable tripod), lift the RIGHT-FRONT paw, then hold the sit until the next STAND. Run:
+'  >> LIFT/SUPPORT THE ROBOT << on launch (gyro cal, then it GLIDES up to stand). SHAKE sits first
+'  (stable tripod), offers the RIGHT-FRONT paw, and ends seated. SALUTE is done STANDING (proper form):
+'  it leans the standing crouch to free the right paw, raises it to attention, then eases back to stand. Run:
 '    pnut-ts -d -q src/test_dog_tricks.spin2
 '    pnut-term-ts -r src/test_dog_tricks.bin -b 2000000 --headless --end-marker "TRICKS_DONE" --timeout 90
 
@@ -27,6 +28,9 @@ CON
   COUNTDOWN_S   = 8
   COG_STACK     = 256
   INIT_MS       = 5000               ' allow cog1 init + gyro cal + power-on glide to stand
+  SETTLE_MS     = 800                ' let the body mechanically settle after each move BEFORE the next command --
+                                     ' the interactive panel gets this from human pacing; without it a gesture
+                                     ' fired into a still-swaying rise (e.g. SALUTE right after STAND-from-SHAKE) tips
   COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
 
 OBJ
@@ -44,7 +48,7 @@ PUB main() | backendCog, ioCog
 '' Launch the production 3-cog shape, then run the trick sequence on mailbox A.
 
     waitms(100)
-    DEBUG("=== TRICKS scenario (production 3-cog shape): SIT / SHAKE / SALUTE ===")
+    DEBUG("=== TRICKS scenario (production 3-cog shape): SIT / SHAKE (seated) / SALUTE (standing) ===")
     DEBUG(">> LIFT/SUPPORT THE ROBOT. cog1 calibrates gyro (hold still) then GLIDES up to stand. <<")
     countdown()
 
@@ -68,10 +72,10 @@ PUB main() | backendCog, ioCog
 
     postPose(dog.CMD_SIT,   string("SIT"))
     postPose(dog.CMD_STAND, string("STAND"))
-    postGesture(dog.CMD_SHAKE,  string("SHAKE (right paw)"))  ' sits, shakes, ends seated
-    postPose(dog.CMD_STAND, string("STAND (after shake)"))
-    postGesture(dog.CMD_SALUTE, string("SALUTE (right paw)")) ' sits, salutes, ends seated
-    postPose(dog.CMD_STAND, string("STAND (after salute)"))
+    postGesture(dog.CMD_SHAKE,  string("SHAKE (right paw)"))  ' SEATED trick: sits, shakes, ends seated
+    postPose(dog.CMD_STAND, string("STAND (stand up after the seated shake)"))
+    postGesture(dog.CMD_SALUTE, string("SALUTE (right paw)")) ' STANDING trick: leans the stand, raises the paw at attention, ends STANDING
+    postPose(dog.CMD_STAND, string("STAND (settle to neutral -- salute already stands)"))
 
     DEBUG("tricks scenario done")
     DEBUG("TRICKS_DONE")
@@ -90,6 +94,7 @@ PRI postPose(cmd, pNameStr) | guard
     guard := 0
     repeat until dog.getMoveComplete() or (guard++ > 800)     ' wait for the move to FINISH
         waitms(5)
+    waitms(SETTLE_MS)                                          ' let the body settle before the next command (panel gets this from human pacing)
     dog.dumpState(pNameStr)
 
 PRI postGesture(cmd, pNameStr) | guard
@@ -105,6 +110,7 @@ PRI postGesture(cmd, pNameStr) | guard
     guard := 0
     repeat while dog.isBusy() and (guard++ < 2000)            ' wait for the gesture to FINISH (~2-3 s)
         waitms(5)
+    waitms(SETTLE_MS)                                          ' let the body settle before the next command (panel gets this from human pacing)
     dog.dumpState(pNameStr)
 
 PRI countdown() | i

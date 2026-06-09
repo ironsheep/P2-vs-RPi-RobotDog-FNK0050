@@ -49,7 +49,7 @@ Three structural notes:
 ## 2. Object inventory & dependency tree
 
 ```
-isp_robot_dog_top        (T4 top: cog0 orchestrator; cogspins the two service cogs)
+robot_dog_top        (T4 top: cog0 orchestrator; cogspins the two service cogs)
   ├─ isp_robot_dog       (cog1: I²C bus owner, mailbox A) ───────────────────────┐
   └─ isp_io_controller   (cog2: discrete-pin owner, mailbox B) ──────────┐       │
                                                                          │       │
@@ -98,7 +98,7 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | `isp_calibration.spin2` | 3 | per-robot trims | per-joint servo trims (metered) + head trim + **static stance leveling** (`stanceTrimY`) |
 | `isp_robot_dog.spin2` | 4 | body coordinator | `{Spin2_v47}` cooperative tasks; mailbox A; smooth-motion engine (50 Hz eased), full gait catalog + speed knob, stand/relax/sit, hello, leveling ⚠ verify |
 | `isp_io_controller.spin2` | 4 | discrete-pin IO cog | mailbox B; non-blocking LED + ranging + buzzer (see row above) |
-| `isp_robot_dog_top.spin2` | 4 | integrated 3-cog top | `cogspin`s backend + IO cogs; scripted demo orchestrator over mailboxes A + B ⚠ verify |
+| `robot_dog_top.spin2` | 4 | integrated 3-cog top | `cogspin`s backend + IO cogs; scripted demo orchestrator over mailboxes A + B ⚠ verify |
 
 There is **no shared OBEX driver** for the ADS7830, MPU6050, or HC-SR04 — each is
 hand-rolled on the seed I²C singleton (or a smart pin). The **full gait catalog**
@@ -144,7 +144,7 @@ role from that identity.
   specified in
   [`../DOCs/spec/P2-RobotDog-Specifications.md`](../DOCs/spec/P2-RobotDog-Specifications.md); the
   as-built engine is ToOps §6.2.
-- **The three cogs are assembled in `isp_robot_dog_top`** — it `cogspin`s the backend (I²C, mailbox
+- **The three cogs are assembled in `robot_dog_top`** — it `cogspin`s the backend (I²C, mailbox
   A) and `isp_io_controller` (discrete pins, mailbox B), and runs a scripted orchestrator on cog 0.
 
 > ✅ The FL/BL/BR/FR ↔ channel assignment is **verified on hardware 2026-06-01** — each commanded
@@ -273,7 +273,7 @@ older menu console **`isp_dog_bringup.spin2`** still exists for interactive use 
 **all run the production 3-cog shape** (both service cogs launched, isolation by what cog 0
 commands — never a single-cog shape): **`test_dog_stand.spin2`** (eased poses), **`test_dog_level.spin2`**
 (IMU static-leveling measure), and **`test_dog_gaits.spin2`** (full gait catalog + speed) each keep
-the IO cog present-but-quiescent (static LED, ranging dormant), while **`isp_robot_dog_top.spin2`**
+the IO cog present-but-quiescent (static LED, ranging dormant), while **`robot_dog_top.spin2`**
 is the full concurrency runtime (LED animation + live ranging + motion + beep, scripted orchestrator
 on cog 0). They drive `DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`. The real frontend
 comms cog (Wi-Fi/serial command link) is still **TODO**.

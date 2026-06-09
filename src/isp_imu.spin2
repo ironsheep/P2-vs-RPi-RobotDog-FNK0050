@@ -177,8 +177,9 @@ PUB tiltDegrees() : pitchDeg, rollDeg | accelX, accelY, accelZ
 '' deg in yaw vs. the textbook X-forward orientation, so the board's accel Y axis reads FORE/AFT and
 '' X reads LATERAL. Verified on the bench 2026-06-08 (test_dog_panel run): pure fore/aft poses (SIT
 '' rear-down -> +, BOW front-down -> -) drive the (ay,az) channel while (ax,az) stays at the build's
-'' lateral residual; so pitch is computed from ay and roll from ax. Fore/aft mapping confirmed;
-'' the lateral (roll) SIGN is unconfirmed (no pure left/right tilt in that run) -- verify by tilting.
+'' lateral residual; so pitch is computed from ay and roll from ax. Fore/aft mapping confirmed.
+'' Lateral (roll) SIGN VERIFIED 2026-06-09 (test_imu left/right hand-tilt): LEFT side high -> roll
+'' POSITIVE (right-side-high -> negative), matching the +roll=LEFT-high convention. No flip needed.
 ''
 '' @returns pitchDeg - pitch angle in degrees (forward/back tilt; nose-up positive)
 '' @returns rollDeg - roll angle in degrees (left/right tilt)
@@ -190,7 +191,7 @@ PUB tiltDegrees() : pitchDeg, rollDeg | accelX, accelY, accelZ
 
     accelX, accelY, accelZ := mpu.readAccelRaw()
     pitchDeg := atan2Degrees(accelY, accelZ)                  ' FORE/AFT: angle of (az, ay) -- sit +, bow -
-    rollDeg := atan2Degrees(-accelX, accelZ)                  ' LATERAL: angle of (az, -ax) -- sign to verify
+    rollDeg := atan2Degrees(-accelX, accelZ)                  ' LATERAL: angle of (az, -ax) -- LEFT-high +, verified 2026-06-09
 
 PRI atan2Degrees(yArg, xArg) : degrees | rho, theta
 ' Signed atan2(yArg, xArg) in degrees [-180..180], via the P2 CORDIC (xypol).

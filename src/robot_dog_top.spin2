@@ -1,7 +1,7 @@
 {Spin2_v47}
 '' =================================================================================================
 ''
-''   File....... isp_robot_dog_top.spin2
+''   File....... robot_dog_top.spin2
 ''   Purpose.... Integrated 3-cog runtime top object: launch the backend body-control cog and the
 ''               discrete-pin IO cog, then run a SCRIPTED demo orchestrator that drives both
 ''               mailboxes concurrently -- LED animation + live ranging + motion + a beep, all at
@@ -40,8 +40,8 @@
    here as UNPROVEN on hardware until the sec.7 bench playbook confirms it.
 
    Download-to-RAM and run (DEBUG @ 2 Mbaud):
-     pnut-ts -d -q src/isp_robot_dog_top.spin2
-     pnut-term-ts -r src/isp_robot_dog_top.bin -b 2000000 --headless --end-marker "DEMO_DONE" --timeout 90
+     pnut-ts -d -q src/robot_dog_top.spin2
+     pnut-term-ts -r src/robot_dog_top.bin -b 2000000 --headless --end-marker "DEMO_DONE" --timeout 90
 }
 
 CON ' ---- clock / debug ----

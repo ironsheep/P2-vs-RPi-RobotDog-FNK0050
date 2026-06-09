@@ -48,7 +48,7 @@ CON ' ---- commands (frontend -> backend mailbox) ----
   '  CMD_CROUCH     - ease to a low symmetric crouch (feet under body, X=0) -- consistent approach pose
   '  CMD_SHAKE      - one-shot: SIT, offer the right-front paw and bob it (shake hands), return to sit
   '  CMD_SALUTE     - one-shot: SIT, raise the right-front paw to a held salute, return to sit
-  '  CMD_LIE_DOWN   - lie down (sphinx): front feet reach forward, body low and level
+  '  CMD_LIE_DOWN   - lie down: a low flat rest, feet under the body, body low and level (paws flat)
   '  CMD_BOW        - play bow: front chest low, hindquarters up
   '  CMD_PUSHUPS    - one-shot: body flexes down/up a few times, returns to stand
   '  CMD_NOD        - one-shot: nod the head "yes" (tilt up/down a few times), legs hold
@@ -128,8 +128,10 @@ CON ' ---- free-leg rebalance (lean the CoG into the support triangle of the oth
                                     '   (leaned-sit foot reach ~103 mm << REACH_MAX_MM). Increase if SHAKE/SALUTE still tip.
 
 CON ' ---- new tricks: lie-down / bow / push-ups / nod (all bench-tunable) ----
-  LIEDOWN_HEIGHT_MM   = 60          ' body low + level for the sphinx lie-down
-  LIEDOWN_FRONT_X_MM  = 45          ' front feet reach forward (sphinx)
+  LIEDOWN_HEIGHT_MM   = 50          ' body low for a flat lie-down rest (low + LEVEL) -- bench-tune
+  LIEDOWN_FRONT_X_MM  = 0           ' feet straight DOWN under the shoulders -- a forward reach makes the front paw bracket
+                                    ' rotate UP off the ground in this leg geometry (and levers the body nose-up), so X=0 keeps paws flat
+  LIEDOWN_LATERAL_MM  = 6           ' foot lateral splay (< STANCE_LATERAL=10): feet tuck under so the FL coxa clears its 65 floor at low height -- bench-tune
   BOW_FRONT_HEIGHT_MM = 50          ' front chest low for the play-bow (rear holds STAND_HEIGHT -> hindquarters up)
   BOW_HEAD_UP_DEG     = 35          ' tilt head UP off center during a bow so the snout clears the surface -- bench-tune; FLIP SIGN if it tilts toward the table
   PUSHUP_FRAMES       = 90          ' total push-up bob frames (~1.8 s @ 50 Hz)
@@ -215,7 +217,7 @@ DAT ' ---- internal control state (backend cog only) ----
   gestureStage     LONG  GST_SIT_IN                           ' stage within a paw gesture (shake/salute)
   gesturePhase     LONG  0
   helloStartX      LONG  0                                    ' FR foot X when the wave began (ease-in anchor)
-  saluteSitC       LONG  0                                    ' FR sit servo angles captured for the raw-servo salute ease
+  saluteSitC       LONG  0                                    ' FR leaned-stand servo angles captured for the raw-servo salute ease (raise FROM / return TO)
   saluteSitF       LONG  0
   saluteSitT       LONG  0
   bLowBattLatched  BYTE  FALSE
@@ -436,6 +438,22 @@ PUB neutralFootY(idx) : fy
     fy := ((idx & 1) == 0) ? NEUTRAL_FRONT_Y_MM : NEUTRAL_REAR_Y_MM
     fy += cal.stanceTrimY(idx)
 
+PUB lieDownFootTarget(idx) : fx, fy, fz
+'' Lie-down foot target for one leg (mm): the single source of truth lieDownPose() commands. A LOW FLAT
+'' REST -- all four feet straight down under the shoulders (X=0) at one low height, so the body sits low
+'' and LEVEL with the paws flat. (NOT a forelegs-stretched sphinx: reaching the front feet forward at
+'' low height rotates the paw bracket UP off the ground in this leg geometry -- see LIEDOWN_FRONT_X_MM.)
+'' start()-independent (CON only), so the host geometry harness can clamp-check it WITHOUT moving servos.
+''
+'' @param idx - leg index 0=FL 1=BL 2=FR 3=BR
+'' @returns fx - fore/aft target, mm (X=0: feet under the shoulders, paws flat)
+'' @returns fy - foot extension, mm (one low height for all four -- low + level)
+'' @returns fz - lateral target, mm (left legs +, right legs -)
+
+    fx := ((idx & 1) == 0) ? LIEDOWN_FRONT_X_MM : 0           ' all feet under the shoulders (LIEDOWN_FRONT_X_MM is 0 -- paws flat)
+    fy := LIEDOWN_HEIGHT_MM
+    fz := (idx < 2) ? LIEDOWN_LATERAL_MM : -LIEDOWN_LATERAL_MM ' narrower than stand: tuck feet under so the FL coxa clears at low height
+
 PUB getHead() : curDeg, tgtDeg
 '' Head pan current + target angle, degrees.
 ''
@@ -602,19 +620,19 @@ PRI consumeCommand() | requestedCmd
             crouchPose()
         CMD_HEAD:
             headPanTo(cmdArg0)
-        CMD_HELLO:
-            if busyFlag == FALSE                              ' reject if a gesture is already running
-                busyFlag := TRUE
-                gestureId := CMD_HELLO
-                gesturePhase := 0
-                gestureStage := GST_LEAN_IN                   ' rebalance the CoG FIRST, then wave (free-leg safety)
-                armMove(0)                                    ' snapshot start[] := current stand for the lean ease
-                activeMode := MODE_GESTURE_BUSY
-                modeState := MODE_GESTURE_BUSY
-        CMD_SHAKE, CMD_SALUTE:
+        CMD_HELLO, CMD_SALUTE:                                ' STANDING single-FR-leg moves: lean the stand, then act (HELLO waves / SALUTE holds at attention)
             if busyFlag == FALSE                              ' reject if a gesture is already running
                 busyFlag := TRUE
                 gestureId := requestedCmd
+                gesturePhase := 0
+                gestureStage := GST_LEAN_IN                   ' rebalance the CoG FIRST, then free FR (free-leg safety)
+                armMove(0)                                    ' snapshot start[] := current pose for the lean ease
+                activeMode := MODE_GESTURE_BUSY
+                modeState := MODE_GESTURE_BUSY
+        CMD_SHAKE:                                            ' SEATED handshake: ease into sit first (stable base), then offer the paw
+            if busyFlag == FALSE                              ' reject if a gesture is already running
+                busyFlag := TRUE
+                gestureId := CMD_SHAKE
                 gesturePhase := 0
                 gestureStage := GST_SIT_IN                    ' ease into sit first (stable base), then act
                 armMove(0)                                    ' snapshot start[] := current stand for the sit-in ease
@@ -841,7 +859,9 @@ PRI advanceGesture()
     case gestureId
         CMD_HELLO:
             advanceHello()
-        CMD_SHAKE, CMD_SALUTE:
+        CMD_SALUTE:
+            advanceSalute()
+        CMD_SHAKE:
             advancePawGesture()
         CMD_PUSHUPS:
             advancePushups()
@@ -899,6 +919,69 @@ PRI advanceHello() | e, idx, lx, ly, lz, waveY
                 gestureStage := GST_LEAN_OUT
 
         GST_LEAN_OUT:                                        ' ease leaned stand -> loaded-rear neutral, then finish
+            e := easeFactor(gesturePhase + 1, LEAN_FRAMES)
+            easeAllToNeutral(e)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= LEAN_FRAMES
+                finishGesture()
+
+PRI advanceSalute() | e, idx, lx, ly, lz, c, f, t
+' Standing salute -- proper form is at ATTENTION, not seated. Reuses HELLO's leaned-stand rebalance so
+' the front-right paw frees without tipping, then raises the FR paw to the hand-dialed RAW servo angles
+' and holds, lowers, and unleans back to the loaded-rear neutral stand. Four stages:
+'   LEAN_IN  : ease all four feet stand -> a LEANED stand (CoG into the FL+BL+BR triangle, away from FR),
+'   ACT      : raise the FR paw (raw servo angles) to the held salute; FL/BL/BR hold the leaned stand,
+'   PAW_DOWN : ease the FR paw back down to the leaned-stand angles,
+'   LEAN_OUT : ease the lean back out to the neutral stand, then finishGesture() (ends STANDING).
+'
+' Local Variables:
+' @local e - ease factor; idx - leg index; lx/ly/lz - leaned-stand foot target; c/f/t - FR salute servo angles
+
+    case gestureStage
+        GST_LEAN_IN:
+            e := easeFactor(gesturePhase + 1, LEAN_FRAMES)
+            repeat idx from 0 to NUM_LEGS - 1
+                lx, ly, lz := leanStandFoot(idx, FREE_FR_LEG)
+                curX[idx] := lerpFix(startX[idx], lx, e)
+                curY[idx] := lerpFix(startY[idx], ly, e)
+                curZ[idx] := lerpFix(startZ[idx], lz, e)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= LEAN_FRAMES
+                longmove(@startX, @curX, NUM_LEGS)           ' re-anchor start[] := leaned stand (for the unlean ease)
+                longmove(@startY, @curY, NUM_LEGS)
+                longmove(@startZ, @curZ, NUM_LEGS)
+                saluteSitC, saluteSitF, saluteSitT := frLeg.getServoAngles()   ' leaned-stand FR angles to raise FROM / return TO
+                curHeadDeg := head.HEAD_CENTER_DEG + cal.headTrim()            ' head level / eyes-front for the salute
+                tgtHeadDeg := curHeadDeg
+                head.panTo(curHeadDeg)
+                gesturePhase := 0
+                gestureStage := GST_ACT
+
+        GST_ACT:                                             ' raise the FR paw to the held salute (raw); FL/BL/BR hold the leaned stand -- no commitCur
+            if gesturePhase < SALUTE_RAISE_FRAMES
+                e := easeFactor(gesturePhase + 1, SALUTE_RAISE_FRAMES)
+                c := lerpFix(saluteSitC, SALUTE_COXA_DEG,  e)
+                f := lerpFix(saluteSitF, SALUTE_FEMUR_DEG, e)
+                t := lerpFix(saluteSitT, SALUTE_TIBIA_DEG, e)
+            else
+                c, f, t := SALUTE_COXA_DEG, SALUTE_FEMUR_DEG, SALUTE_TIBIA_DEG   ' hold the salute
+            frLeg.driveServoDegrees(c, f, t)
+            gesturePhase++
+            if gesturePhase >= SALUTE_RAISE_FRAMES + SALUTE_HOLD_FRAMES
+                gesturePhase := 0
+                gestureStage := GST_PAW_DOWN
+
+        GST_PAW_DOWN:                                        ' ease the FR paw back down to the leaned-stand angles (raw)
+            e := easeFactor(gesturePhase + 1, GEST_RECOVER_FRAMES)
+            frLeg.driveServoDegrees(lerpFix(SALUTE_COXA_DEG, saluteSitC, e), lerpFix(SALUTE_FEMUR_DEG, saluteSitF, e), lerpFix(SALUTE_TIBIA_DEG, saluteSitT, e))
+            gesturePhase++
+            if gesturePhase >= GEST_RECOVER_FRAMES
+                gesturePhase := 0
+                gestureStage := GST_LEAN_OUT
+
+        GST_LEAN_OUT:                                        ' ease leaned stand -> loaded-rear neutral, then finish STANDING
             e := easeFactor(gesturePhase + 1, LEAN_FRAMES)
             easeAllToNeutral(e)
             commitCur()
@@ -993,14 +1076,14 @@ PRI finishGesture()
     modeState := MODE_IDLE
     standPose()
 
-PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t, lx, lz
-' Staged right-front-paw gesture (shake / salute): ease into SIT for a stable base, act with the FR
-' paw while the other three legs hold the sit, lower the paw, then hold the sit (a later STAND/STOP
-' stands up). SHAKE acts in foot-XYZ (handshake bob); SALUTE drives the FR paw to hand-dialed RAW
-' servo angles (the Cal-tool position) and holds the head level. One ease everywhere -- no snaps.
+PRI advancePawGesture() | e, idx, sy, frX, frY, lx, lz
+' Staged right-front-paw HANDSHAKE (SHAKE): ease into a LEANED sit for a stable base, offer + bob the FR
+' paw while the other three legs hold the sit, lower the paw, then level the sit (a later STAND/STOP
+' stands up). All foot-XYZ, one ease everywhere -- no snaps. (SALUTE is now a STANDING gesture, proper
+' form at attention -- see advanceSalute.)
 '
 ' Local Variables:
-' @local e - ease factor; idx - leg index; sy/sz - sit Y/Z; frX/frY - SHAKE FR foot; c/f/t - SALUTE FR servo angles
+' @local e - ease factor; idx - leg index; sy - sit Y; frX/frY - SHAKE FR foot
 ' @local lx/lz - body-lean foot offsets that rebalance the sit's CoG away from the freed FR paw
 
     lx, lz := leanOffsets(FREE_FR_LEG, PAW_LEAN_LAT_MM)      ' LEAN the sit (not a level sit): shift CoG into the FL+BL+BR tripod before FR lifts
@@ -1009,64 +1092,41 @@ PRI advancePawGesture() | e, idx, sy, sz, frX, frY, c, f, t, lx, lz
             e := easeFactor(gesturePhase + 1, GEST_SIT_FRAMES)
             repeat idx from 0 to NUM_LEGS - 1
                 sy := ((idx == 1) or (idx == 3)) ? SIT_FRONT_HEIGHT_MM : STAND_HEIGHT_MM   ' back legs lowered
-                sz := ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + lz            ' + lateral lean
                 curX[idx] := lerpFix(startX[idx], lx, e)                                   ' + fore/aft lean (feet forward to free the front paw)
                 curY[idx] := lerpFix(startY[idx], sy, e)
-                curZ[idx] := lerpFix(startZ[idx], sz, e)
+                curZ[idx] := lerpFix(startZ[idx], ((idx < 2) ? STANCE_LATERAL_MM : -STANCE_LATERAL_MM) + lz, e)   ' + lateral lean
             commitCur()
             gesturePhase++
             if gesturePhase >= GEST_SIT_FRAMES
                 longmove(@startX, @curX, NUM_LEGS)           ' re-anchor start[] := sit (FR action eases from here)
                 longmove(@startY, @curY, NUM_LEGS)
                 longmove(@startZ, @curZ, NUM_LEGS)
-                if gestureId == CMD_SALUTE
-                    saluteSitC, saluteSitF, saluteSitT := frLeg.getServoAngles()   ' FR sit servo angles (raw) to ease FROM
-                    curHeadDeg := head.HEAD_CENTER_DEG + cal.headTrim()            ' head level / straight forward
-                    tgtHeadDeg := curHeadDeg
-                    head.panTo(curHeadDeg)
                 gesturePhase := 0
                 gestureStage := GST_ACT
 
-        GST_ACT:
-            if gestureId == CMD_SALUTE                        ' raise the FR paw to the hand-dialed RAW servo angles
-                if gesturePhase < SALUTE_RAISE_FRAMES
-                    e := easeFactor(gesturePhase + 1, SALUTE_RAISE_FRAMES)
-                    c := lerpFix(saluteSitC, SALUTE_COXA_DEG,  e)
-                    f := lerpFix(saluteSitF, SALUTE_FEMUR_DEG, e)
-                    t := lerpFix(saluteSitT, SALUTE_TIBIA_DEG, e)
-                else
-                    c, f, t := SALUTE_COXA_DEG, SALUTE_FEMUR_DEG, SALUTE_TIBIA_DEG   ' hold the salute
-                frLeg.driveServoDegrees(c, f, t)             ' FR only (raw); FL/BL/BR hold their sit -- no commitCur
-                gesturePhase++
-                if gesturePhase >= SALUTE_RAISE_FRAMES + SALUTE_HOLD_FRAMES
-                    gesturePhase := 0
-                    gestureStage := GST_PAW_DOWN
-            else                                             ' CMD_SHAKE -- handshake bob in foot-XYZ
-                if gesturePhase < SHAKE_LEADIN_FRAMES
-                    e := easeFactor(gesturePhase + 1, SHAKE_LEADIN_FRAMES)
-                    frX := lerpFix(startX[2], SHAKE_REACH_X_MM, e)
-                    frY := lerpFix(startY[2], SHAKE_HEIGHT_MM, e)
-                else
-                    frX := SHAKE_REACH_X_MM
-                    frY := SHAKE_HEIGHT_MM
-                frY += qsin(SHAKE_BOB_MM, degToUnits(gesturePhase * SHAKE_BOB_SPEED_DEG), 0)   ' up/down bob
-                setCur(2, frX, frY, -STANCE_LATERAL_MM)
-                commitCur()
-                gesturePhase++
-                if gesturePhase >= SHAKE_FRAMES
-                    longmove(@startX[2], @curX[2], 1)        ' anchor FR for the lower-back-to-sit ease
-                    longmove(@startY[2], @curY[2], 1)
-                    longmove(@startZ[2], @curZ[2], 1)
-                    gesturePhase := 0
-                    gestureStage := GST_PAW_DOWN
+        GST_ACT:                                             ' CMD_SHAKE -- handshake bob in foot-XYZ
+            if gesturePhase < SHAKE_LEADIN_FRAMES
+                e := easeFactor(gesturePhase + 1, SHAKE_LEADIN_FRAMES)
+                frX := lerpFix(startX[2], SHAKE_REACH_X_MM, e)
+                frY := lerpFix(startY[2], SHAKE_HEIGHT_MM, e)
+            else
+                frX := SHAKE_REACH_X_MM
+                frY := SHAKE_HEIGHT_MM
+            frY += qsin(SHAKE_BOB_MM, degToUnits(gesturePhase * SHAKE_BOB_SPEED_DEG), 0)   ' up/down bob
+            setCur(2, frX, frY, -STANCE_LATERAL_MM)
+            commitCur()
+            gesturePhase++
+            if gesturePhase >= SHAKE_FRAMES
+                longmove(@startX[2], @curX[2], 1)            ' anchor FR for the lower-back-to-sit ease
+                longmove(@startY[2], @curY[2], 1)
+                longmove(@startZ[2], @curZ[2], 1)
+                gesturePhase := 0
+                gestureStage := GST_PAW_DOWN
 
-        GST_PAW_DOWN:                                        ' lower the FR paw back to the sit stance
+        GST_PAW_DOWN:                                        ' lower the FR paw back to the LEANED sit (mirror GST_SIT_IN's lean so the rest stays balanced)
             e := easeFactor(gesturePhase + 1, GEST_RECOVER_FRAMES)
-            if gestureId == CMD_SALUTE                        ' ease the FR servos back to the sit angles (raw)
-                frLeg.driveServoDegrees(lerpFix(SALUTE_COXA_DEG, saluteSitC, e), lerpFix(SALUTE_FEMUR_DEG, saluteSitF, e), lerpFix(SALUTE_TIBIA_DEG, saluteSitT, e))
-            else                                             ' CMD_SHAKE -- foot-XYZ back to the LEANED sit (mirror GST_SIT_IN's lean so the rest stays balanced)
-                setCur(2, lerpFix(startX[2], lx, e), lerpFix(startY[2], STAND_HEIGHT_MM, e), lerpFix(startZ[2], -STANCE_LATERAL_MM + lz, e))
-                commitCur()
+            setCur(2, lerpFix(startX[2], lx, e), lerpFix(startY[2], STAND_HEIGHT_MM, e), lerpFix(startZ[2], -STANCE_LATERAL_MM + lz, e))
+            commitCur()
             gesturePhase++
             if gesturePhase >= GEST_RECOVER_FRAMES
                 longmove(@startX, @curX, NUM_LEGS)           ' F6: anchor start[] := leaned sit for the level-out ease
@@ -1132,13 +1192,14 @@ PRI crouchPose()
     setLegTargets(0, CROUCH_HEIGHT_MM, STANCE_LATERAL_MM, -STANCE_LATERAL_MM)
     beginPoseMove(POSE_FRAMES)
 
-PRI lieDownPose()
-' Sphinx lie-down: front feet reach forward, body low and level (all feet at LIEDOWN_HEIGHT).
+PRI lieDownPose() | idx, fx, fy, fz
+' Lie-down: a low flat rest -- all feet under the shoulders, body low and level (all feet at
+' LIEDOWN_HEIGHT, paws flat). Targets come from lieDownFootTarget() so the host geometry harness
+' clamp-checks the exact pose this commands.
 
-    setLegTarget(0, LIEDOWN_FRONT_X_MM, LIEDOWN_HEIGHT_MM,  STANCE_LATERAL_MM)   ' FL forward
-    setLegTarget(2, LIEDOWN_FRONT_X_MM, LIEDOWN_HEIGHT_MM, -STANCE_LATERAL_MM)   ' FR forward
-    setLegTarget(1, 0,                  LIEDOWN_HEIGHT_MM,  STANCE_LATERAL_MM)   ' BL under body
-    setLegTarget(3, 0,                  LIEDOWN_HEIGHT_MM, -STANCE_LATERAL_MM)   ' BR under body
+    repeat idx from 0 to NUM_LEGS - 1
+        fx, fy, fz := lieDownFootTarget(idx)
+        setLegTarget(idx, fx, fy, fz)
     beginPoseMove(POSE_FRAMES)
 
 PRI bowPose()

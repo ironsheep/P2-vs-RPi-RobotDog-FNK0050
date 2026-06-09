@@ -54,6 +54,10 @@ PUB main() | idx
     repeat idx from 0 to NUM_LEGS - 1
         DEBUG("    leg ", udec_(idx), " neutralFootY=", sdec_(dog.neutralFootY(idx)))
 
+    DEBUG("--- lie-down clamp-check (low flat rest, feet under @ X=0, vs FL coxa + rear-fold clamps) ---")
+    repeat idx from 0 to NUM_LEGS - 1
+        checkLieDownLeg(idx)
+
     if failCount == 0
         DEBUG("RESULT: PASS (all four legs clamp-safe; loaded-rear conformation holds)")
     else
@@ -88,6 +92,34 @@ PRI checkLeg(idx) | side, ending, fx, fy, fz, aDeg, bDeg, cDeg, servoCoxa, servo
     DEBUG("  leg ", udec_(idx), " XYZ(", sdec_(fx), ",", sdec_(fy), ",", sdec_(fz), ")  IK a=", sdec_(aDeg), ...
           " b=", sdec_(bDeg), " c=", sdec_(cDeg), "  servo coxa=", sdec_(servoCoxa), " femur=", sdec_(servoFemur), ...
           " tibia=", sdec_(servoTibia))
+
+    assertInside(string("coxa"),  idx, servoCoxa,  leg.COXA_SERVO_MIN,  leg.COXA_SERVO_MAX)
+    assertInside(string("femur"), idx, servoFemur, leg.FEMUR_SERVO_MIN, leg.FEMUR_SERVO_MAX)
+    assertInside(string("tibia"), idx, servoTibia, leg.TIBIA_SERVO_MIN, leg.TIBIA_SERVO_MAX)
+
+PRI checkLieDownLeg(idx) | side, ending, fx, fy, fz, servoCoxa, servoFemur, servoTibia, femurMargin
+' Seed one leg's side + trims, run the pure foot-XYZ -> servo pipeline for its LIE-DOWN target, print
+' the result + the rear-fold femur margin (how many degrees of clamp room remain before lowering the
+' body / changing the front reach pegs it), and assert every servo angle is strictly inside its clamp.
+'
+' @param idx - leg index (0=FL 1=BL 2=FR 3=BR)
+'
+' Local Variables:
+' @local side/ending - SIDE_/END_ for this leg ; fx/fy/fz - lie-down foot target (mm)
+' @local servoCoxa/servoFemur/servoTibia - physical servo angles (deg, post mirror/trim/clamp)
+' @local femurMargin - degrees from the femur servo to its nearer clamp edge (smallest at the rear)
+
+    side := (idx < 2) ? leg.SIDE_LEFT : leg.SIDE_RIGHT
+    ending := ((idx & 1) == 0) ? leg.END_FRONT : leg.END_BACK
+    leg.setSide(side)
+    leg.setCalibration(cal.legTrims(side, ending))
+
+    fx, fy, fz := dog.lieDownFootTarget(idx)
+    servoCoxa, servoFemur, servoTibia := leg.solveServoDegrees(fx, fy, fz)
+    femurMargin := (servoFemur - leg.FEMUR_SERVO_MIN) <# (leg.FEMUR_SERVO_MAX - servoFemur)
+
+    DEBUG("  leg ", udec_(idx), " XYZ(", sdec_(fx), ",", sdec_(fy), ",", sdec_(fz), ")  servo coxa=", sdec_(servoCoxa), ...
+          " femur=", sdec_(servoFemur), " tibia=", sdec_(servoTibia), "  femur clamp margin=", sdec_(femurMargin), " deg")
 
     assertInside(string("coxa"),  idx, servoCoxa,  leg.COXA_SERVO_MIN,  leg.COXA_SERVO_MAX)
     assertInside(string("femur"), idx, servoFemur, leg.FEMUR_SERVO_MIN, leg.FEMUR_SERVO_MAX)
