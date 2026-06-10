@@ -1,29 +1,35 @@
 '' =================================================================================================
 ''
 ''   File....... isp_io_controller.spin2
-''   Purpose.... Discrete-pin IO cog: owns the WS2812 LED, buzzer and ultrasonic; serves them
-''               non-blocking from one cog, tasked by the comms cog via a hub mailbox
+''   Purpose.... Discrete-pin IO cog: owns the WS2812 LED, buzzer, ultrasonic, and (optionally) the
+''               DF2301Q voice recognizer on a 2nd I2C bus; serves them all non-blocking from one cog,
+''               tasked by the comms cog via a hub mailbox
 ''   Authors.... Stephen M Moraco
 ''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
 ''               -- see below for terms of use
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... May 2026
-''   Updated.... 31 May 2026
+''   Updated.... 10 June 2026
 ''
 '' =================================================================================================
 
 { Description and usage notes:
 
-   Launch in its OWN cog (the owner of the non-I2C pins) via
-   cogspin(NEWCOG, io.start(ledPin, buzzerPin, trigPin, echoPin), @stack).
-   It owns WS2812 (P8), buzzer (P10) and ultrasonic (ECHO P9 / TRIG P11), and runs a NON-BLOCKING service
-   loop: step the LED animation, run the smart-pin ranging state machine, expire the buzzer.
-   Nothing blocks, so the three coexist with no jitter (smart pins do the timing -> ~1 % load).
+   Launch in its OWN cog (the owner of the non-bus-1 pins) via
+   cogspin(NEWCOG, io.start(ledPin, buzzerPin, trigPin, echoPin), @stack) -- or
+   cogspin(NEWCOG, io.startWithVoice(ledPin, buzzerPin, trigPin, echoPin, vScl, vSda), @stack) to also
+   own the 2nd I2C bus carrying the DF2301Q voice recognizer.
+   It owns WS2812 (P8), buzzer (P10), ultrasonic (ECHO P9 / TRIG P11), and (with startWithVoice) the
+   2nd I2C bus (P18 SCL / P16 SDA), and runs a NON-BLOCKING service loop: step the LED animation, run
+   the smart-pin ranging state machine, expire the buzzer, poll the voice recognizer. Nothing blocks,
+   so they coexist with no jitter (smart pins / the bounded clock-stretch guard do the timing).
 
-   The comms cog talks to this object ONLY through the hub mailbox: postCommand() to send
-   intent, getDistanceMm()/getPingSeq()/isLedBusy() to read telemetry. Those touch shared DAT
-   only -- never the pins -- so they are safe from another cog. See
-   DOCs/P2_FIRMWARE_THEORY_OF_OPS.md (the discrete-pin IO cog + mailbox B).
+   The comms cog talks to this object ONLY through the hub mailbox: postCommand() to send intent,
+   getDistanceMm()/getPingSeq()/isLedBusy()/getVoiceCmdId()/getVoiceSeq() to read telemetry. Those touch
+   shared DAT only -- never the pins -- so they are safe from another cog. The IO cog PUBLISHES the
+   recognized voice CMDID as latest-wins telemetry; it does NOT map CMDIDs to behavior or post commands
+   (that is the top-level dispatch loop's job). See DOCs/P2_FIRMWARE_THEORY_OF_OPS.md (the discrete-pin
+   IO cog + mailbox B).
 }
 
 CON ' ---- IO commands (mailbox B) ----
@@ -49,11 +55,19 @@ CON ' ---- tuning ----
 CON ' ---- ranging state ----
   #0, R_IDLE, R_WAIT
 
+CON ' ---- voice recognizer (DF2301Q on the 2nd I2C bus) ----
+  ' Optional: enabled only when startWithVoice() receives real bus pins (vScl <> VOICE_OFF).
+  VOICE_OFF        = -1             ' vScl/vSda sentinel: "no voice bus on this build"
+  VOICE_I2C_KHZ    = 100            ' DF2301Q standard bus speed (its quick-start default)
+  VOICE_I2C_PULLUP = 0              ' = isp_i2c PU_NONE (DF2301Q Gravity board carries its own SDA/SCL
+                                    '   pull-ups); §6 wiring metering confirms / may change to PU_3K3 (=2)
+
 OBJ
 
   ring   : "isp_led_ring"                                    ' WS2812 effects (P8)
   buzzer : "isp_buzzer"                                      ' buzzer (P10)
   sonic  : "isp_hcsr04"                                      ' ultrasonic (ECHO P9 / TRIG P11), smart-pin mode
+  voice  : "isp_voice_recognizer"                            ' DF2301Q voice (2nd I2C bus, optional)
   stack  : "isp_stack_check"                                 ' COG stack-overflow detector
 
 DAT ' ---- command mailbox B (comms cog writes, IO cog reads) ----
@@ -65,9 +79,11 @@ DAT ' ---- command mailbox B (comms cog writes, IO cog reads) ----
 
 DAT ' ---- IO telemetry (IO cog writes, anyone reads) ----
 
-  distMm   LONG  -1                                          ' latest distance (NO_ECHO if none)
-  pingSeq  LONG  0                                            ' bumps each new reading
-  ledBusy  LONG  0                                            ' 1 while an animated LED mode runs
+  distMm      LONG  -1                                       ' latest distance (NO_ECHO if none)
+  pingSeq     LONG  0                                         ' bumps each new reading
+  ledBusy     LONG  0                                         ' 1 while an animated LED mode runs
+  voiceCmdId  LONG  0                                         ' latest recognized DF2301Q CMDID (0 = none yet)
+  voiceCmdSeq LONG  0                                         ' bumps once per recognition (readers detect freshness)
 
 DAT ' ---- internal service state (IO cog only) ----
 
@@ -85,18 +101,37 @@ DAT ' ---- internal service state (IO cog only) ----
   echoDeadline       LONG  0
   pIoStack           LONG  0                                  ' IO-cog launch stack (set by setStackCheck)
   ioStackLongs       LONG  0
+  bVoicePresent      BYTE  FALSE                              ' TRUE if the DF2301Q ACKed at startWithVoice()
+  lastVoiceRaw       LONG  0                                  ' previous pollCMDID() value (0->nonzero edge detect)
 
 PUB null()
 '' This is not a top-level object.
 ''
 
 PUB start(ledPin, buzzerPin, trigPin, echoPin)
-'' Own the discrete pins and run the IO service loop (never returns). cogspin into its own cog.
+'' Own the discrete pins and run the IO service loop, voice DISABLED (never returns). cogspin into its own cog.
+'' Thin wrapper over startWithVoice() with the voice bus off -- keeps the legacy 4-arg launch that the
+'' quiescent test tops use unchanged.
 ''
 '' @param ledPin - WS2812 data pin
 '' @param buzzerPin - buzzer pin
 '' @param trigPin - HC-SR04 TRIG pin
 '' @param echoPin - HC-SR04 ECHO pin (level-shifted to <= 3.3 V)
+
+    startWithVoice(ledPin, buzzerPin, trigPin, echoPin, VOICE_OFF, VOICE_OFF)
+
+PUB startWithVoice(ledPin, buzzerPin, trigPin, echoPin, vScl, vSda)
+'' Own the discrete pins (+ optionally the 2nd I2C bus for voice) and run the IO service loop (never returns).
+'' cogspin into its own cog. Pass vScl = VOICE_OFF to build without voice (then this cog owns no 2nd bus and
+'' stepVoice is inert). When voice pins are given, probe the DF2301Q; an absent module just leaves voice off
+'' (bVoicePresent FALSE) -- never a hang (the driver's bounded clock-stretch guard guarantees no stuck bus).
+''
+'' @param ledPin - WS2812 data pin
+'' @param buzzerPin - buzzer pin
+'' @param trigPin - HC-SR04 TRIG pin
+'' @param echoPin - HC-SR04 ECHO pin (level-shifted to <= 3.3 V)
+'' @param vScl - voice 2nd-bus SCL pin, or VOICE_OFF (-1) for no voice
+'' @param vSda - voice 2nd-bus SDA pin (ignored when vScl = VOICE_OFF)
 
     msTicks := clkfreq / MS_TICKS_DIV
     ledFrameTicks := LED_FRAME_MS * msTicks
@@ -106,6 +141,10 @@ PUB start(ledPin, buzzerPin, trigPin, echoPin)
     ring.start(ledPin)                                        ' configures + blanks the strip
     buzzer.start(buzzerPin)
     sonic.startSmart(trigPin, echoPin)                        ' non-blocking smart-pin ranging
+
+    bVoicePresent := FALSE
+    if vScl <> VOICE_OFF
+        bVoicePresent := voice.start(vScl, vSda, VOICE_I2C_KHZ, VOICE_I2C_PULLUP)  ' this cog owns the 2nd bus
 
     nextLedTick := getct()
     nextPingTick := getct()
@@ -148,6 +187,22 @@ PUB isLedBusy() : bBusy
 
     bBusy := (ledBusy <> 0)
 
+PUB getVoiceCmdId() : cmdId
+'' Return the most recently recognized voice command-word ID (DF2301Q CMDID; 0 = none recognized yet).
+'' This is the RAW DF2301Q vocabulary ID, NOT a dog CMD_* -- mapping to behavior is a separate concern.
+''
+'' @returns cmdId - latest recognized DF2301Q CMDID
+
+    cmdId := voiceCmdId
+
+PUB getVoiceSeq() : seq
+'' Return the voice-recognition sequence counter (bumps once per recognition; lets readers detect freshness
+'' without polling the bus, exactly as getPingSeq() does for ranging).
+''
+'' @returns seq - voice recognition sequence number
+
+    seq := voiceCmdSeq
+
 PUB setStackCheck(pStack, nStackLongs)
 '' (launcher) Register THIS IO cog's launch stack so serviceLoop watches it for overflow.
 '' Call AFTER cogspin (the launcher prepped the sentinel before launch).
@@ -169,6 +224,7 @@ PRI serviceLoop()
         stepLed()
         stepBuzzer()
         stepRanging()
+        stepVoice()
 
 PRI consumeCommand() | requestedCmd
 ' Latch and acknowledge the newest mailbox-B command, then act on it.
@@ -246,6 +302,25 @@ PRI stepRanging() | milliMeters
                     publishDistance(milliMeters)
                 elseif due(echoDeadline)
                     publishDistance(sonic.NO_ECHO)
+
+PRI stepVoice() | rawId
+' Poll the voice recognizer (2nd I2C bus) and publish a recognized CMDID latest-wins. pollCMDID() is
+' self-limiting -- it touches the bus at most once per ~50 ms and returns the CACHED value in between --
+' so calling it every service pass is safe and non-blocking. Edge-detect 0->nonzero: the cached CMDID
+' reads nonzero for the whole 50 ms window, and this no-delay loop runs thousands of passes in that time,
+' so publishing on a bare nonzero would bump the seq thousands of times for one recognition. The device
+' clears its result register on read, so two identical words in a row still show a 0 between them --
+' each genuine recognition is one 0->nonzero edge -> exactly one seq bump (even when the CMDID repeats).
+'
+' Local Variables:
+' @local rawId - this pass's pollCMDID() result (0 = nothing recognized)
+
+    if bVoicePresent
+        rawId := voice.pollCMDID()
+        if rawId <> 0 and lastVoiceRaw == 0
+            voiceCmdId := rawId                               ' publish value first...
+            voiceCmdSeq++                                     ' ...then bump seq (readers detect "new" by seq)
+        lastVoiceRaw := rawId
 
 PRI publishDistance(milliMeters)
 ' Publish a ranging result and re-arm the next ping.
