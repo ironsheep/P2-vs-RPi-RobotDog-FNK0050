@@ -3,45 +3,58 @@
 ''
 ''   File....... robot_dog_top.spin2
 ''   Purpose.... Integrated 3-cog runtime top object: launch the backend body-control cog and the
-''               discrete-pin IO cog, then run a SCRIPTED demo orchestrator that drives both
-''               mailboxes concurrently -- LED animation + live ranging + motion + a beep, all at
-''               once, proving the cogs coexist with no stutter (Theory-of-Ops D7).
+''               discrete-pin + voice IO cog, then run the persistent DISPATCH LOOP -- watch the IO
+''               cog's voice telemetry and hand recognized commands to the backend, gated on
+''               motion-completion. (The legacy scripted 3-cog concurrency self-test is preserved
+''               behind DEMO_ON_BOOT.) This sprint the voice->behavior map seam returns CMD_NONE for
+''               every word, so the loop traces its dispatch+gating decisions but posts nothing yet.
 ''   Authors.... Stephen M Moraco
 ''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
 ''               -- see below for terms of use
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... June 2026
-''   Updated.... 02 June 2026
+''   Updated.... 10 June 2026
 ''
 '' =================================================================================================
 
 { Description and usage notes:
 
-   This is the FIRST object to realize the documented 3-cog runtime (Theory-of-Ops sec.2 cog map):
+   This object realizes the documented 3-cog runtime (Theory-of-Ops sec.2 cog map):
 
-     cog0  this object's main() -- the comms/orchestrator (here: a scripted demo, not yet a
-           real Wi-Fi/serial command link -- that link is deferred)
+     cog0  this object's main() -- the persistent DISPATCH LOOP (was a scripted demo): launch the
+           other two cogs, then steadily watch the IO cog's voice telemetry and dispatch recognized
+           commands to the backend. This is the seed of the real command link (Wi-Fi/serial still
+           deferred); for now voice is the command SOURCE.
      cog1  isp_dog_motion.start(SCL,SDA) -- the I2C bus owner: legs + head + IMU + battery,
            the smooth-motion engine, commanded through mailbox A (dog.postCommand)
-     cog2  isp_io_controller.start(...) -- the discrete-pin owner: WS2812 LED, buzzer and the
-           non-blocking smart-pin ultrasonic, commanded through mailbox B (io.postCommand)
+     cog2  isp_io_controller.startWithVoice(...) -- the discrete-pin owner (WS2812 LED, buzzer,
+           non-blocking smart-pin ultrasonic) AND the 2nd-I2C-bus owner for the DF2301Q voice
+           recognizer; commanded through mailbox B (io.postCommand), publishes voice telemetry.
 
-   main() owns NO peripheral pins -- it only posts to the two mailboxes and reads telemetry
-   getters, all of which touch shared hub DAT only (never a bus or pin), so the three cogs never
-   contend. The orchestrator interleaves mailbox-A motion commands with mailbox-B IO commands and
-   samples telemetry from both, demonstrating concurrent operation with no hitching.
+   main() owns NO peripheral pins -- it only posts to the two mailboxes and reads telemetry getters,
+   all of which touch shared hub DAT only (never a bus or pin), so the three cogs never contend.
+
+   DISPATCH LOOP (the steady state): each pass read io.getVoiceSeq(); when it advances, a fresh
+   DF2301Q CMDID is available via io.getVoiceCmdId(). The CMDID is traced (with its phrase) and
+   passed through the voiceToDogCmd() MAP SEAM. >> THIS SPRINT that seam returns CMD_NONE for every
+   word -- the recognized-word -> behavior table is the NEXT sprint. << The motion-gate is computed
+   from existing backend signals (getMoveComplete/getModeState/isBusy/isHalted) and DEBUG-traced so
+   the architecture is real and reviewable, but because the seam yields CMD_NONE no dog.postCommand
+   ever fires here yet.
+
+   DEMO_ON_BOOT = TRUE restores the legacy scripted 3-cog concurrency self-test (LED animation +
+   live ranging + motion + a beep, all at once -- Theory-of-Ops D7) instead of the dispatch loop, so
+   that proof is not lost. Default boot = the dispatch loop.
 
    >> LIFT / SUPPORT THE ROBOT before running << -- on launch cog1 calibrates the gyro (hold
-   still) and STANDS via IK, then the demo walks gaits.
-
-   BENCH NOTE: cog2's non-blocking smart-pin ranging path (sonic.startSmart/firePing/echoReadyMm)
-   had only ever been exercised via the earlier blocking-poll bring-up. This top is the
-   first launch of the IO cog and the first integrated exercise of that path -- treat live ranging
-   here as UNPROVEN on hardware until the sec.7 bench playbook confirms it.
+   still) and STANDS via IK.
 
    Download-to-RAM and run (DEBUG @ 2 Mbaud):
      pnut-ts -d -q src/robot_dog_top.spin2
-     pnut-term-ts -r src/robot_dog_top.bin -b 2000000 --headless --end-marker "DEMO_DONE" --timeout 90
+     ' dispatch loop is persistent -- it runs until the harness --timeout (no DEMO_DONE marker):
+     pnut-term-ts -r src/robot_dog_top.bin -b 2000000 --headless --timeout 90
+     ' DEMO_ON_BOOT build ends on its marker:
+     '   pnut-term-ts -r src/robot_dog_top.bin -b 2000000 --headless --end-marker "DEMO_DONE" --timeout 90
 }
 
 CON ' ---- clock / debug ----
@@ -55,6 +68,8 @@ CON ' ---- as-built pin map (DOCs/P2-platform/P2_MIGRATION_WIRING.md sec.3; veri
   PIN_ECHO      = 9                   ' HC-SR04 ECHO (in, ~1 kohm series R)
   PIN_BUZZER    = 10                  ' buzzer
   PIN_TRIG      = 11                  ' HC-SR04 TRIG
+  PIN_VSCL      = 18                  ' DF2301Q voice 2nd-I2C-bus SCL (mailbox B, cog2)
+  PIN_VSDA      = 16                  ' DF2301Q voice 2nd-I2C-bus SDA
 
 CON ' ---- LED ring mode IDs (mirror of isp_led_ring MODE_*; passed as IO_LED_MODE arg0) ----
   LED_MODE_OFF           = 0
@@ -68,17 +83,23 @@ CON ' ---- packed $RRGGBB colors for IO_LED_SOLID ----
   COLOR_GREEN   = $00_20_00          ' dim green = "IO cog alive"
   COLOR_BLUE    = $00_00_30
 
-CON ' ---- demo timing & cogs ----
+CON ' ---- boot mode ----
+  DEMO_ON_BOOT  = FALSE               ' FALSE = persistent voice DISPATCH LOOP (default product steady state).
+                                      ' TRUE  = legacy scripted 3-cog concurrency self-test (D7 proof), then DEMO_DONE.
+
+CON ' ---- timing & cogs ----
   COUNTDOWN_S   = 8                   ' launch countdown (shared cadence across the bench tops)
   COG_STACK     = 256                 ' per-launched-cog stack (longs)
   BACKEND_INIT_MS = 5000             ' allow cog1 init + gyro cal + initial STAND
-  SAMPLE_COUNT  = 6                   ' telemetry samples per concurrent phase
-  SAMPLE_MS     = 500                 ' spacing between telemetry samples
+  DISPATCH_POLL_MS = 25              ' dispatch-loop voice-telemetry watch cadence
+  SAMPLE_COUNT  = 6                   ' telemetry samples per concurrent phase (DEMO_ON_BOOT path)
+  SAMPLE_MS     = 500                 ' spacing between telemetry samples (DEMO_ON_BOOT path)
 
 OBJ
 
   dog     : "isp_dog_motion"                                  ' cog1: I2C bus owner, mailbox A
-  io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B
+  io      : "isp_io_controller"                              ' cog2: discrete pins + voice bus, mailbox B
+  names   : "isp_voice_command_names"                        ' DF2301Q CMDID -> human-readable phrase
   version : "isp_version"                                    ' firmware version constants
   stack   : "isp_stack_check"                                ' COG stack-overflow detector
 
@@ -93,24 +114,25 @@ VAR
   long  lastPingSeq                                          ' previous ranging seq (freshness detector)
 
 PUB main() | backendCog, ioCog
-'' Launch the backend and IO cogs, then run the scripted concurrent demo (never returns).
+'' Launch the backend + voice-IO cogs, then run the persistent dispatch loop (or, with DEMO_ON_BOOT,
+'' the legacy scripted concurrency self-test). Never returns.
 
     waitms(100)
-    DEBUG("=== P2 RoboDog 3-COG INTEGRATION demo ===")
+    DEBUG("=== P2 RoboDog 3-COG RUNTIME ===")
     DEBUG("    firmware v", udec_(version.FW_VERSION_MAJOR), ".", udec_(version.FW_VERSION_MINOR), ".", udec_(version.FW_VERSION_PATCH))
-    DEBUG("    cog0 orchestrator (this) | cog1 backend/I2C | cog2 IO/discrete pins")
-    DEBUG(">> LIFT / SUPPORT THE ROBOT. cog1 will calibrate gyro (hold still) then STAND, then walk. <<")
+    DEBUG("    cog0 dispatch loop (this) | cog1 backend/I2C | cog2 IO/discrete pins + voice bus")
+    DEBUG(">> LIFT / SUPPORT THE ROBOT. cog1 will calibrate gyro (hold still) then STAND. <<")
     countdown()
 
     stack.prepStackForCheck(@ioStack, COG_STACK)             ' fill pattern + sentinel BEFORE launch
     stack.prepStackForCheck(@backendStack, COG_STACK)
 
     ' ---- bring cog2 (IO) up first: it owns no shared bus, so it is alive instantly ----
-    ioCog := cogspin(NEWCOG, io.start(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO), @ioStack)
+    ioCog := cogspin(NEWCOG, io.startWithVoice(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO, PIN_VSCL, PIN_VSDA), @ioStack)
     if ioCog < 0
         abortDemo(string("FAILED to start IO cog"))
     io.setStackCheck(@ioStack, COG_STACK)                    ' IO cog now self-watches its stack
-    DEBUG("IO cog launched in cog ", udec_(ioCog), " (LED P8, buzzer P10, ultrasonic P9/P11)")
+    DEBUG("IO cog launched in cog ", udec_(ioCog), " (LED P8, buzzer P10, ultrasonic P9/P11, voice P", udec_(PIN_VSCL), "/P", udec_(PIN_VSDA), ")")
     io.postCommand(io.IO_LED_SOLID, COLOR_GREEN, 0, 0, 0)     ' visible "cog2 alive" before cog1 even inits
     io.postCommand(io.IO_BUZZ_BEEP, 120, 0, 0, 0)             ' short hello chirp
 
@@ -122,13 +144,88 @@ PUB main() | backendCog, ioCog
     DEBUG("backend cog launched in cog ", udec_(backendCog), "; init + gyro cal + initial STAND...")
     waitms(BACKEND_INIT_MS)
     reportTelemetry(string("after init + initial STAND"))
+    DEBUG("voice present  = ", zstr_(io.voicePresent() ? string("T (DF2301Q ACKed on bus 2)") : string("F (module absent/off -- dispatch loop idles)")))
 
-    runConcurrentDemo()
-    windDown()
+    if DEMO_ON_BOOT
+        runConcurrentDemo()                                  ' legacy D7 self-test path
+        windDown()
+        DEBUG("3-cog integration demo complete")
+        DEBUG("DEMO_DONE")
+        repeat
 
-    DEBUG("3-cog integration demo complete")
-    DEBUG("DEMO_DONE")
+    dispatchLoop()                                           ' product steady state -- never returns
+
+PRI dispatchLoop() | lastVoiceSeq, curVoiceSeq, voiceId, dogCmd
+' The product steady state (replaces the scripted demo): watch the IO cog's voice telemetry and
+' dispatch each fresh recognition to the backend, gated on motion-completion. Never returns.
+' Reads only hub telemetry getters (no bus/pin), so it never contends with cog1/cog2.
+'
+' @local lastVoiceSeq - previously-seen voice-recognition seq (freshness edge detect)
+' @local curVoiceSeq - voice seq read this pass
+' @local voiceId - latest recognized DF2301Q CMDID
+' @local dogCmd - the dog CMD_* the map seam yields (CMD_NONE every time this sprint)
+
+    DEBUG("-- dispatch loop: listening for voice (map seam returns CMD_NONE this sprint -> nothing posts) --")
+    lastVoiceSeq := io.getVoiceSeq()
     repeat
+        curVoiceSeq := io.getVoiceSeq()
+        if curVoiceSeq <> lastVoiceSeq                       ' a fresh recognition was published by cog2
+            lastVoiceSeq := curVoiceSeq
+            voiceId := io.getVoiceCmdId()
+            DEBUG("voice: CMDID ", udec_(voiceId), "  '", zstr_(names.cmdName(voiceId)), "'")
+            dogCmd := voiceToDogCmd(voiceId)                 ' map seam (deferred): CMD_NONE for now
+            dispatchToBackend(dogCmd)                        ' compute + trace the gate; post only if mapped+allowed
+        waitms(DISPATCH_POLL_MS)
+
+PRI voiceToDogCmd(voiceCmdId) : dogCmd
+' MAP SEAM (sprint-deferred): translate a DF2301Q voice CMDID into a dog CMD_* behavior.
+' >> THIS SPRINT this returns CMD_NONE for EVERY input. << The recognized-word -> behavior table is
+' the NEXT sprint's deliverable; filling it touches ONLY this one function. Keeping the seam here now
+' makes the dispatch loop real and reviewable without committing to any word->behavior assignment.
+'
+' @param voiceCmdId - raw DF2301Q command-word ID from the voice telemetry (unused until the map exists)
+' @returns dogCmd - the dog CMD_* to post, or CMD_NONE to ignore (always CMD_NONE this sprint)
+
+    dogCmd := dog.CMD_NONE
+
+PRI dispatchToBackend(dogCmd) | bComplete, mode, bBusy, bHalted, bGate
+' Motion-gate SKELETON: from existing backend signals decide whether dogCmd could hand off to
+' mailbox A RIGHT NOW, DEBUG-trace the decision, and post only when mapped AND allowed. Because the
+' map seam yields CMD_NONE this sprint, NO dog.postCommand ever fires here -- but the gate is real.
+'
+' Gate policy (mirrors the panel's button->command rules):
+'   - isHalted (critical-battery hard floor latched): SUPPRESS every handoff -- the backend refuses motion.
+'   - mid one-shot gesture (isBusy and move not complete): HOLD the command until getMoveComplete().
+'   - MODE_GAITING (latched gait, never self-completes): a new command MAY supersede/stop it -> allow.
+'   - otherwise idle/standing: free to hand off.
+'
+' @param dogCmd - the dog CMD_* to (conditionally) post; CMD_NONE means "no behavior mapped -> nothing to do"
+' @local bComplete - getMoveComplete() (FALSE while an eased move runs)
+' @local mode - getModeState() (MODE_IDLE/GAITING/GESTURE_BUSY/RELAXED/LOWBATT)
+' @local bBusy - isBusy() (TRUE while a one-shot gesture runs)
+' @local bHalted - isHalted() (TRUE once a critical-battery halt latches)
+' @local bGate - computed decision: TRUE = could hand off now
+
+    bComplete := dog.getMoveComplete()
+    mode      := dog.getModeState()
+    bBusy     := dog.isBusy()
+    bHalted   := dog.isHalted()
+
+    bGate := TRUE
+    if bHalted
+        bGate := FALSE                                       ' battery halt -> suppress
+    elseif bBusy and not bComplete
+        bGate := FALSE                                       ' one-shot in progress -> hold until complete
+
+    DEBUG("  gate: dogCmd=", udec_(dogCmd), " mode=", udec_(mode), " moveDone=", udec_(bComplete ? 1 : 0), " busy=", udec_(bBusy ? 1 : 0), " halted=", udec_(bHalted ? 1 : 0), " -> ", zstr_(bGate ? string("HANDOFF") : string("withhold")))
+
+    if dogCmd == dog.CMD_NONE
+        DEBUG("  -> no behavior mapped (CMD_NONE); nothing posted (word->behavior map is next sprint)")
+    elseif bGate
+        dog.postCommand(dogCmd, 0, 0, 0, 0)                  ' (unreachable this sprint -- seam yields CMD_NONE)
+        DEBUG("  -> posted CMD ", udec_(dogCmd), " to mailbox A")
+    else
+        DEBUG("  -> handoff withheld this pass (gate closed)")
 
 PRI runConcurrentDemo()
 ' The heart of D7: LED animation + live ranging + motion + a beep, all running at once across the
