@@ -77,7 +77,7 @@ PROJECT_INIT_DATE: 2026-05-31
 # pnut-term-ts is not in this container, so flash/run is bench-side; the
 # p2-dev-cycle skill constructs the flash invocation from slots when run on the bench.
 P2_WORK_DIR: src/
-SPIN2_TOP_FILE: isp_dog_bringup.spin2   # current top; override per invocation for other tops
+SPIN2_TOP_FILE: robot_dog_top.spin2   # current top; override per invocation for other tops
 P2_CLOCK_FREQ: 200_000_000              # _clkfreq used across the firmware; pre-flash clock check
 P2_DEBUG_BAUD: 2000000                  # PROJECT STANDARD: ALL P2 comms (debug + the bring-up console) at 2 Mbaud
 # P2_USB_DEVICE / RUN_TIMEOUT_SECONDS / P2_INCLUDE_PATHS / P2_LOG_DIR /

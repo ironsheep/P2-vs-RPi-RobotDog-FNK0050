@@ -21,12 +21,12 @@ hardware the Pi's Python stack drove. Language is **Spin2 / PASM2**, compiled wi
 ## 1. Layered object model
 
 Drivers and behaviors stack in **four tiers**. Tiers 1–3 are the per-device driver shape
-already established by the seed `isp_i2c_pca9685*` and `isp_serial_singleton` objects;
+already established by the seed `isp_i2c_pca9685*` objects;
 Tier 4 is the behavioral/coordination layer that composes devices into a robot.
 
 | Tier | Role | Speaks in… | Examples |
 |------|------|-----------|----------|
-| **1 — transport** | Raw hardware access; one bus / one signal. Knows no device. | bytes, ACK/NAK, pin transitions | `isp_i2c_singleton`, `isp_serial_singleton`, `isp_ws2812.streamBuffer()` |
+| **1 — transport** | Raw hardware access; one bus / one signal. Knows no device. | bytes, ACK/NAK, pin transitions | `isp_i2c_singleton`, `isp_ws2812.streamBuffer()` |
 | **2 — chip** | Register-level access to one device. | register addresses, raw counts | `isp_i2c_pca9685`, `isp_i2c_ads7830` |
 | **3 — semantics** | The *user's* mental model of one part. | degrees, volts, named colors | `isp_i2c_pca9685_servo`, `isp_battery_monitor`, `isp_leg`, `isp_head`, `isp_led_ring` |
 | **4 — coordination** | Composes many parts into whole-robot behavior. | gaits, poses, commands | `isp_dog_motion` |
@@ -70,7 +70,7 @@ isp_io_controller        (T4 IO cog: non-blocking LED + buzzer + ranging service
   ├─ isp_buzzer          (T2+T3: buzzer, smart pin — no I²C)
   └─ isp_hcsr04          (T2+T3: ultrasonic, smart pin — no I²C)
 
-(every object) ── isp_serial_singleton (debug: dec/hex/fstr/memDump) ── jm_nstr (number→string)
+(every object) ── DEBUG() built-in (debug output over the 2 Mbaud programming UART)
 ```
 
 All objects below **compile clean** with PNut-ts v1.55 (`pnut-ts -q`). Items marked
@@ -80,8 +80,6 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | File | Tier | Device / role | Notes |
 |------|------|---------------|-------|
 | `isp_i2c_singleton.spin2` | 1 | I²C bus master | **seed**; shared by all I²C chips. `setup/present/write/read/wr_block/rd_block/stop`. ACK=0, NAK=1 |
-| `isp_serial_singleton.spin2` | 1 | debug UART | **seed**; `fstrN`, `dec`/`hex`/`bin`, `memDump`. Used by every object |
-| `jm_nstr.spin2` | — | number formatting | **seed**; helper for the serial object |
 | `isp_i2c_pca9685.spin2` | 2 | PCA9685 @ `0x40` | **seed**; 16-ch PWM register driver |
 | `isp_i2c_pca9685_servo.spin2` | 3 | servo | **seed**; degrees/µSec, limits, slew ramp tables |
 | `isp_i2c_ads7830.spin2` | 2 | ADS7830 @ `0x48` | `readChannelRaw` / `readChannelMillivolts` (divider-agnostic). VREF 5.0 V (consistent with the metered ÷3 battery) |
@@ -267,9 +265,7 @@ pnut-term-ts -r src/test_i2c_scan.bin -b 2000000 --headless \
 > *download* (fine, ignore it) but does **not** auto-apply the debug baud to the *runtime* read — so
 > 2 Mbaud `DEBUG` comes back as garbage unless you pass `-b 2000000`. Logs land in `logs/`.
 
-These were used for the 2026-06-01 bring-up (results: `../DOCs/P2-platform/P2_MIGRATION_WIRING.md` §7). The
-older menu console **`isp_dog_bringup.spin2`** still exists for interactive use against
-[`../DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md`](../DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md). The smooth-motion bench tests
+These were used for the 2026-06-01 bring-up (results: `../DOCs/P2-platform/P2_MIGRATION_WIRING.md` §7). The smooth-motion bench tests
 **all run the production 3-cog shape** (both service cogs launched, isolation by what cog 0
 commands — never a single-cog shape): **`test_dog_stand.spin2`** (eased poses), **`test_dog_level.spin2`**
 (IMU static-leveling measure), and **`test_dog_gaits.spin2`** (full gait catalog + speed) each keep
@@ -293,8 +289,8 @@ comms cog (Wi-Fi/serial command link) is still **TODO**.
 - **Naming:** `isp_<...>.spin2`, Iron Sheep Productions prefix. If the device is reached over
   **I²C**, put `i2c` in the name (`isp_i2c_ads7830`); smart-pin / single-signal / behavioral
   objects omit it (`isp_ws2812`, `isp_hcsr04`, `isp_leg`, `isp_dog_motion`).
-- **Debug:** every object takes an `enableDebug(T/F)` and routes through the shared
-  `isp_serial_singleton` so diagnostics interleave on one port.
+- **Debug:** objects emit diagnostics via the built-in `DEBUG()` (compiled out unless the
+  debugger is attached); output lands on the 2 Mbaud programming UART.
 - **License:** MIT, © Iron Sheep Productions, LLC (see each file's footer). Upstream
   Freenove `REF/` material is CC BY-NC-SA 3.0 and is **excluded** from this repo.
 - **P2 KB / OBEX:** for PASM2/Spin2 questions and reusable objects, use the **p2kb-mcp**

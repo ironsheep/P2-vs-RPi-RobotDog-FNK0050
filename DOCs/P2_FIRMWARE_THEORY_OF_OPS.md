@@ -390,7 +390,7 @@ Each stage **builds on the last**: the engine (1) is the fluid substrate; the mo
 
 ## 7. Startup / init sequence
 
-1. **Cog 0** boots (Spin top object): start `isp_serial_singleton` (debug), parse config.
+1. **Cog 0** boots (Spin top object): debug output via the built-in `DEBUG()`, parse config.
 2. Cog 0 launches **cog 2** (IO). Cog 2 owns its discrete pins: brings up `isp_led_ring`
    (idle/boot pattern), idles the buzzer, configures the ultrasonic smart pins, and begins
    periodic ranging — publishing `distMm`/`pingSeq`. Then it services mailbox B.

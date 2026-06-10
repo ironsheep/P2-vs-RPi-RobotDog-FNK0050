@@ -6,10 +6,10 @@ Additive rules for authoring verification playbooks on this project. Central ste
 
 The verification surface is **a single P2 bench unit** ({{TEST_FLEET_DESCRIPTION}}), not a
 fleet — most exercises target one unit; there is no multi-device sync to specify. There is **no
-automated or interactive simulator**: exercises are run by hand at the bench through the
-**`isp_dog_bringup` menu console** (flash it, open serial on the programming port at 2 Mbaud
-— the project standard, `P2_DEBUG_BAUD` — press the test's menu digit). Live tests run until a keypress. State each exercise's
-**menu key** in its heading (or Setup). The model playbook is `DOCs/plans/archive/P2_BRINGUP_PLAYBOOK.md`.
+automated or interactive simulator**: exercises are run by hand at the bench by flashing the
+relevant top (a `test_*` harness or `robot_dog_top`) and watching `DEBUG()` output on the
+programming port at 2 Mbaud (the project standard, `P2_DEBUG_BAUD`). State each exercise's
+**top file** in its heading (or Setup). The model playbook is `DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`.
 
 ## Augments §2 exercise format — every inferred constant gets a metered-vs-read check
 

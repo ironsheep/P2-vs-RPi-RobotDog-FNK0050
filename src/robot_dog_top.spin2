@@ -35,7 +35,7 @@
    still) and STANDS via IK, then the demo walks gaits.
 
    BENCH NOTE: cog2's non-blocking smart-pin ranging path (sonic.startSmart/firePing/echoReadyMm)
-   has only ever run via the BLOCKING menu test (isp_dog_bringup readDistanceMm). This top is the
+   had only ever been exercised via the earlier blocking-poll bring-up. This top is the
    first launch of the IO cog and the first integrated exercise of that path -- treat live ranging
    here as UNPROVEN on hardware until the sec.7 bench playbook confirms it.
 

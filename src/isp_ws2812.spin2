@@ -13,7 +13,7 @@
 
 { Description and usage notes:
 
-   Two internal layers (like isp_serial_singleton keeps low/high in one file):
+   Two internal layers (low + high transport bundled in one file):
      TIER-1 transport -- streamBuffer(): inline PASM2 bit-banger, the only hardware code
      TIER-2 framing   -- brightness scaling + GRB wire packing into the pixel buffer
    Display modes/effects live one tier up in isp_led_ring. WS2812 is a single discrete data
