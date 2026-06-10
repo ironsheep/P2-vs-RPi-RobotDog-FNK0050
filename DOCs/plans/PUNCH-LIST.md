@@ -10,6 +10,27 @@ on hardware · `[x]` done.
 
 ## Active
 
+### [ ] Unify the two I2C bus masters — add clock-stretch back to the DAT singleton — *experiment; deferred*
+
+**What:** we now have two I2C bus masters that have **diverged**: `src/isp_i2c.spin2` (VAR/instance,
+built for the 2nd/voice bus) **honors clock-stretch** (`STRETCH_LIMIT`), while `src/isp_i2c_singleton.spin2`
+(DAT, bus 1 — servos/IMU/battery) had clock-stretch **removed**. The experiment: add the same bounded
+clock-stretch waits back into the **singleton** and confirm bus 1's devices (PCA9685 `$40`, ADS7830
+`$48`, MPU6050 `$68`) still talk correctly.
+
+**Why it would pay off:** if it proves out, we have **one I2C structure / one bus engine, in two
+implementations** — a DAT (singleton) and a VAR (instance) — that differ **only in storage scope**, not
+in behavior. That keeps the matched pair maintainable (a bus-logic fix lands in both the same way)
+instead of two drifting engines.
+
+**Why it's expected to be safe:** a device that does **not** clock-stretch releases SCL immediately
+after `drvh scl`, so the bounded `testp scl wc` wait passes on the first check — ~1 extra instruction per
+bit, no timing/behavior change. The bound (`STRETCH_LIMIT`) prevents any hang if a line is stuck.
+
+**Where:** port the `read()`/`wait()`/`stop()` clock-stretch waits from `isp_i2c.spin2` (or the
+voice-tested `DOCs/REF-NO-COMMMIT/` copy) into `src/isp_i2c_singleton.spin2`; bench-verify bus 1 unchanged
+(servo/IMU/battery via the existing test drivers). *Noticed 2026-06-10, during the voice 2nd-bus prep.*
+
 ### [ ] Lower LIE_DOWN needs front-leg re-trim — *deferred; cal task, not a CON tweak*
 
 **What:** the lie-down rest currently ships at `LIEDOWN_HEIGHT_MM=50` (low + level, paws flat,
