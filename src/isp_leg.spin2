@@ -78,13 +78,11 @@ OBJ
   coxaServo  : "isp_i2c_pca9685_servo"                       ' the three leg servos (TIER-3 seed)
   femurServo : "isp_i2c_pca9685_servo"
   tibiaServo : "isp_i2c_pca9685_servo"
-  term       : "isp_serial_singleton"                        ' debug terminal output
 
 VAR ' ---- PER-INSTANCE leg state (each isp_leg object is independent -- MUST be VAR, not DAT;
     '      the backend runs four leg objects and they must not share side/trim) ----
 
   byte  bLeftSide                                            ' SIDE mirror flag (per leg)
-  byte  bShowDebug
   long  calOffsetCoxa                                        ' per-joint trim offsets (degrees)
   long  calOffsetFemur
   long  calOffsetTibia
@@ -288,13 +286,6 @@ PUB lastServoAngles() : coxaDeg, femurDeg, tibiaDeg | uSec
     uSec, coxaDeg  := coxaServo.getPosition()
     uSec, femurDeg := femurServo.getPosition()
     uSec, tibiaDeg := tibiaServo.getPosition()
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PRI initServos(coxaCh, femurCh, tibiaCh)
 ' Assign the three servo channels for this leg (no motion yet).

@@ -41,15 +41,10 @@ CON ' ---- pulse timing & conversion ----
   NOT_READY       = -2              ' smart-pin echo not captured yet (non-blocking poll)
   ECHO_TICK_MASK  = $7FFF_FFFF      ' RDPIN high-time field in P_HIGH_TICKS mode (Z reg)
 
-OBJ
-
-  term : "isp_serial_singleton"                              ' debug terminal output
-
 DAT ' ---- singleton state ----
 
   trigPin     LONG  -1
   echoPin     LONG  -1
-  bShowDebug  BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -113,9 +108,6 @@ PUB readDistanceMm() : distanceMm | ticksPerUs, deadline, riseTicks, echoUs, bEd
             echoUs := (getct() - riseTicks) / ticksPerUs
             distanceMm := echoUs * MM_PER_CM / US_PER_CM
 
-    if bShowDebug
-        term.fstr1(string("sonic- distanceMm=%d\r\n"), distanceMm)
-
 PUB readDistanceCm() : distanceCm
 '' Fire one ping and return the measured distance in centimeters.
 ''
@@ -169,13 +161,6 @@ PUB echoReadyMm() : distanceMm | echoTicks, ticksPerUs
         echoTicks := rdpin(echoPin) & ECHO_TICK_MASK
         ticksPerUs := clkfreq / US_PER_SEC
         distanceMm := (echoTicks / ticksPerUs) * MM_PER_CM / US_PER_CM
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 CON ' ---- License ----
 

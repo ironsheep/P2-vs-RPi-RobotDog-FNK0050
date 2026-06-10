@@ -53,12 +53,10 @@ CON ' ---- MPU6050 device & registers ----
 OBJ
 
   i2c_bus : "isp_i2c_singleton"                              ' TIER-1 low-level bus master
-  term    : "isp_serial_singleton"                           ' debug terminal output
 
 DAT ' ---- singleton state ----
 
   bDeviceFound  BYTE  FALSE
-  bShowDebug    BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -82,15 +80,6 @@ PUB start(pinSCL, pinSDA) : status
         writeReg(REG_ACCEL_CONFIG, ACCEL_RANGE_2G)
         writeReg(REG_GYRO_CONFIG, GYRO_RANGE_250DPS)
         status := SUCCESS
-    if bShowDebug
-        term.fstr1(string("mpu- start() status=%d\r\n"), status)
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PUB isPresent() : bDevicePresent
 '' Return TRUE if the MPU6050 was detected at start().

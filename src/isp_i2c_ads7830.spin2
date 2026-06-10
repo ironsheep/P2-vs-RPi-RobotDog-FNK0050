@@ -51,12 +51,10 @@ CON ' ---- ADS7830 device ----
 OBJ
 
   i2c_bus : "isp_i2c_singleton"                              ' TIER-1 low-level bus master
-  term    : "isp_serial_singleton"                           ' debug terminal output
 
 DAT ' ---- singleton state ----
 
   bDeviceFound  BYTE  FALSE                                   ' TRUE once the device ACKs at start()
-  bShowDebug    BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -75,21 +73,12 @@ PUB start(pinSCL, pinSDA) : status
     bDeviceFound := i2c_bus.present(ADS7830_ADDR | MODE_WRITE)
     i2c_bus.stop()                                            ' leave bus in a stable state
     status := (bDeviceFound) ? SUCCESS : E_NO_DEVICE
-    if bShowDebug
-        term.fstr1(string("ads- start() status=%d\r\n"), status)
 
 PUB stop()
 '' Release the I2C bus (pins float).
 ''
 
     i2c_bus.stop()
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PUB isPresent() : bDevicePresent
 '' Return TRUE if the ADS7830 was detected at start().
@@ -123,9 +112,6 @@ PUB readChannelRaw(channel) : raw8 | cmd
     i2c_bus.write(ADS7830_ADDR | MODE_READ)
     raw8 := i2c_bus.read(i2c_bus.NAK)
     i2c_bus.stop()
-
-    if bShowDebug
-        term.fstr3(string("ads- readChannelRaw(ch%d) cmd=0x%.02x -> %d\r\n"), channel, cmd, raw8)
 
 PUB rawToMillivolts(raw8) : milliVolts
 '' Convert a raw ADS7830 count to the voltage present AT THE ADC PIN, in millivolts.

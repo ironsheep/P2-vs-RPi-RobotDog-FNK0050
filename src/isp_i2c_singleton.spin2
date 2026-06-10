@@ -35,54 +35,15 @@ con
 
   #0, MK_NOTHING, MK_START, MK_WRITE, MK_READ, MK_STOP, MK_SDA, MK_SCL
 
-  MAX_LOG_ENTRIES = 30
-
-OBJ
-    term                : "isp_serial_singleton"                 ' terminal output
-
 DAT
     ' following 3 LONGs must stay in this position relative to each other!
 sclpin        long      0                               ' i2c bus pins
 sdapin        long      0
 clktix        long      0                               ' system ticks in 1/4 period
 
-' for debug dumps
-logBytes      WORD      0[MAX_LOG_ENTRIES]
-entryCount    WORD      0
-bShowDebug    BYTE      FALSE
-
 pub null()
 
 '' This is not a top-level object
-
-PRI record(mode, value)
-    if bShowDebug
-        if entryCount < MAX_LOG_ENTRIES - 1
-            WORD [@logBytes][entryCount] := (mode & $ff) << 8 | (value & $ff)
-            entryCount++
-
-PRI report() | bytIndex, mode, value
-    if bShowDebug
-        if entryCount > 0
-            repeat bytIndex from 0 to entryCount - 1
-                mode := WORD [@logBytes][bytIndex] >> 8
-                value := WORD [@logBytes][bytIndex] & $ff
-                case mode
-                    MK_START:
-                        term.fstr0(string("  start()\r\n"))
-                    MK_WRITE:
-                        term.fstr1(string("  write(0x%.02x)\r\n"), value)
-                    MK_READ:
-                        term.fstr1(string("  read(0x%.02x)\r\n"), value)
-                    MK_STOP:
-                        term.fstr0(string("  stop()\r\n"))
-                    MK_SCL:
-                        term.fstr1(string("  SCL=%d\r\n"), value)
-                    MK_SDA:
-                        term.fstr1(string("  SDA=%d\r\n"), value)
-                    other:
-                        term.fstr0(string("  {unknown??}}\r\n"))
-            entryCount := 0
 
 pub quiesce(pScl, pSda, pullup) | scl, sda
 
@@ -108,8 +69,6 @@ pub quiesce(pScl, pSda, pullup) | scl, sda
 
 
 pub setup(pScl, pSda, khz, pullup) | scl, sda, tix
-
-  entryCount := 0
 
 '' Define I2C SCL (clock) and SDA (data) pins
 '' -- khz is bus frequency: 100 (standard), 400 (full), 1000 (fast)
@@ -181,7 +140,6 @@ pub start() | scl, sda, tix
   scl := sclpin
   sda := sdapin
   tix := clktix
-  record(MK_START, 0)
 
   org
                 drvh      sda                                   ' both high
@@ -204,7 +162,6 @@ pub write(i2cbyte) : ackbit | scl, sda, tix
   scl := sclpin
   sda := sdapin
   tix := clktix
-  record(MK_WRITE, i2cbyte)
 
   org
                 shl       i2cbyte, #24                          ' align i2cbyte.[7] to i2cbyte.[31]
@@ -308,7 +265,6 @@ pub read(ackbit) : i2cbyte | scl, sda, tix
                 waitx     tix
                 waitx     tix
   end
-  record(MK_READ, i2cbyte)
 
 
 pub rd_block(p_block, count, ackbit) | i2cbyte, scl, sda, tix
@@ -365,7 +321,6 @@ pub stop() | scl, sda, tix
   scl := sclpin
   sda := sdapin
   tix := clktix
-  record(MK_STOP, 0)
 
   org
                 drvl      sda                                   ' hold sda low
@@ -373,7 +328,6 @@ pub stop() | scl, sda, tix
                 waitx     tix
                 drvh      sda                                   ' finish stop sequence
   end
-  report()
 
 
 CON { license }

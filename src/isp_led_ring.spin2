@@ -45,7 +45,6 @@ CON ' ---- color-wheel & chase ----
 OBJ
 
   strip : "isp_ws2812"                                       ' TIER-1+2 dumb strip
-  term  : "isp_serial_singleton"                             ' debug terminal output
 
 DAT ' ---- singleton state ----
 
@@ -53,7 +52,6 @@ DAT ' ---- singleton state ----
   currentColor  LONG  0                                       ' packed $RRGGBB for solid modes
   animPhase     LONG  0                                       ' animation frame counter (0..255)
   wipeIndex     LONG  0                                       ' next pixel for MODE_WIPE
-  bShowDebug    BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -134,13 +132,6 @@ PUB update() | pixelIdx, red, grn, blu
                 strip.setPixelColor(pixelIdx, red, grn, blu)
             strip.show()
     animPhase := (animPhase + 1) & COLOR_WHEEL_MASK
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PRI wheel(wheelPos) : red, grn, blu
 ' Map a wheel position 0..255 to an R/G/B color spanning the spectrum (per Freenove Led.wheel).

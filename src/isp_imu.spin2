@@ -55,14 +55,12 @@ CON ' ---- scaling & calibration ----
 OBJ
 
   mpu  : "isp_i2c_mpu6050"                                   ' TIER-2 chip driver
-  term : "isp_serial_singleton"                              ' debug terminal output
 
 DAT ' ---- singleton state ----
 
   gyroOffsetX  LONG  0                                        ' at-rest gyro bias (raw counts)
   gyroOffsetY  LONG  0
   gyroOffsetZ  LONG  0
-  bShowDebug   BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -76,15 +74,6 @@ PUB start(pinSCL, pinSDA) : status
 '' @returns status - SUCCESS, or E_NO_DEVICE if the MPU6050 did not ACK
 
     status := (mpu.start(pinSCL, pinSDA) == mpu.SUCCESS) ? SUCCESS : E_NO_DEVICE
-    if bShowDebug
-        term.fstr1(string("imu- start() status=%d\r\n"), status)
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PUB calibrateGyro() : status | attemptIdx, sampleIdx, gyroX, gyroY, gyroZ, refGyroX, refGyroY, refGyroZ, sumGyroX, sumGyroY, sumGyroZ, bMoved
 '' Capture the at-rest gyroscope bias, rejecting any window taken while the robot is moving.
@@ -133,10 +122,8 @@ PUB calibrateGyro() : status | attemptIdx, sampleIdx, gyroX, gyroY, gyroZ, refGy
         if not bMoved
             status := SUCCESS                                 ' still enough -> accept this window
             quit
-        if bShowDebug
-            term.fstr1(string("imu- cal attempt %d saw motion -- retry\r\n"), attemptIdx)
-    if bShowDebug
-        term.fstr3(string("imu- gyro bias x=%d y=%d z=%d\r\n"), gyroOffsetX, gyroOffsetY, gyroOffsetZ)
+        DEBUG("imu- cal attempt ", udec_(attemptIdx), " saw motion -- retry")
+    DEBUG("imu- gyro bias x=", sdec_(gyroOffsetX), " y=", sdec_(gyroOffsetY), " z=", sdec_(gyroOffsetZ))
 
 PUB readAccelMilliG() : axMilliG, ayMilliG, azMilliG | accelX, accelY, accelZ
 '' Read acceleration on all three axes, in milli-g (1000 = 1 g).

@@ -179,7 +179,6 @@ OBJ
   imu     : "isp_imu"
   battery : "isp_battery_monitor"
   cal     : "isp_calibration"                                ' per-joint servo trims (this robot)
-  term    : "isp_serial_singleton"                           ' debug terminal output
   stack   : "isp_stack_check"                                ' COG/task stack-overflow detector
 
 DAT ' ---- command mailbox (frontend cog writes, backend cog reads) ----
@@ -221,7 +220,6 @@ DAT ' ---- internal control state (backend cog only) ----
   saluteSitF       LONG  0
   saluteSitT       LONG  0
   bLowBattLatched  BYTE  FALSE
-  bShowDebug       BYTE  FALSE
   bCriticalConfirmed BYTE FALSE                              ' F8: senseTask confirmed a <5 V pack (confirm-burst passed)
   bHaltLatched     BYTE  FALSE                               ' F8: critical-battery HALT engaged -- refuse motion until reset
   lowBattReadings  LONG  0                                    ' consecutive low battery readings
@@ -495,13 +493,6 @@ PRI legLabel(idx) : pStr
         3: pStr := string("BR")
         other: pStr := string("??")
 
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
-
 PRI dispatchLoop() | reportCt
 ' Backend main task: consume commands, enforce the safety floor, yield. Never returns.
 '
@@ -679,8 +670,7 @@ PRI applySafetyFloor()
             activeMode := MODE_RELAXED
             modeState := MODE_LOWBATT
             relaxPose()
-            if bShowDebug
-                term.fstr1(string("dog- LOW BATTERY %d mV -> relax\r\n"), battMilliVolts)
+            DEBUG("dog- LOW BATTERY ", udec_(battMilliVolts), " mV -> relax")
 
 PRI advanceGait() | aUnits, bUnits
 ' Advance the active gait one frame. Diagonal pairs A={FL,BR} and B={BL,FR} run 180 deg out of

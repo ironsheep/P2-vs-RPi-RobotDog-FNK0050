@@ -18,15 +18,10 @@
    is needed; driving the pin high makes sound. A discrete pin, not on the I2C bus.
 }
 
-OBJ
-
-  term : "isp_serial_singleton"                              ' debug terminal output
-
 DAT ' ---- singleton state ----
 
   buzzerPin   LONG  -1
   bSounding   BYTE  FALSE
-  bShowDebug  BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -69,13 +64,6 @@ PUB isSounding() : bActive
 '' @returns bActive - TRUE if the buzzer is sounding
 
     bActive := bSounding
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 CON ' ---- License ----
 

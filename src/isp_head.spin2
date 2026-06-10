@@ -32,12 +32,10 @@ CON ' ---- head geometry ----
 OBJ
 
   panServo : "isp_i2c_pca9685_servo"                         ' the one head servo (TIER-3 seed)
-  term     : "isp_serial_singleton"                          ' debug terminal output
 
 DAT ' ---- singleton state ----
 
   currentAngle  LONG  HEAD_CENTER_DEG
-  bShowDebug    BYTE  FALSE
   headName      BYTE  "head", 0
 
 PUB null()
@@ -58,8 +56,6 @@ PUB panTo(angleDeg)
 
     currentAngle := HEAD_MIN_DEG #> angleDeg <# HEAD_MAX_DEG
     panServo.writePosition(panServo.M_ANGLE, currentAngle)
-    if bShowDebug
-        term.fstr1(string("head- panTo %d deg\r\n"), currentAngle)
 
 PUB center()
 '' Aim the head straight ahead.
@@ -96,13 +92,6 @@ PUB sweep(fromDeg, toDeg, stepDeg, dwellMs) | angleDeg, stepSigned
             angleDeg := toDeg
         panTo(angleDeg)
         waitms(dwellMs)
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 CON ' ---- License ----
 

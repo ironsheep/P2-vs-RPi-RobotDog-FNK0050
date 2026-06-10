@@ -54,7 +54,6 @@ OBJ
   ring   : "isp_led_ring"                                    ' WS2812 effects (P8)
   buzzer : "isp_buzzer"                                      ' buzzer (P10)
   sonic  : "isp_hcsr04"                                      ' ultrasonic (ECHO P9 / TRIG P11), smart-pin mode
-  term   : "isp_serial_singleton"                            ' debug terminal output
   stack  : "isp_stack_check"                                 ' COG stack-overflow detector
 
 DAT ' ---- command mailbox B (comms cog writes, IO cog reads) ----
@@ -84,7 +83,6 @@ DAT ' ---- internal service state (IO cog only) ----
   rangeState         LONG  R_IDLE
   nextPingTick       LONG  0
   echoDeadline       LONG  0
-  bShowDebug         BYTE  FALSE
   pIoStack           LONG  0                                  ' IO-cog launch stack (set by setStackCheck)
   ioStackLongs       LONG  0
 
@@ -149,13 +147,6 @@ PUB isLedBusy() : bBusy
 '' @returns bBusy - TRUE if the ring is animating
 
     bBusy := (ledBusy <> 0)
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PUB setStackCheck(pStack, nStackLongs)
 '' (launcher) Register THIS IO cog's launch stack so serviceLoop watches it for overflow.

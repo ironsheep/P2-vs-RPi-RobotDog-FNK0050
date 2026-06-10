@@ -46,12 +46,10 @@ CON ' ---- battery sensing ----
 OBJ
 
   adc  : "isp_i2c_ads7830"                                    ' TIER-2 chip driver
-  term : "isp_serial_singleton"                              ' debug terminal output
 
 DAT ' ---- singleton state ----
 
   rawSamples  LONG  0[SAMPLE_COUNT]
-  bShowDebug  BYTE  FALSE
 
 PUB null()
 '' This is not a top-level object.
@@ -65,15 +63,6 @@ PUB start(pinSCL, pinSDA) : status
 '' @returns status - SUCCESS, or E_NO_DEVICE if the ADS7830 did not ACK
 
     status := (adc.start(pinSCL, pinSDA) == adc.SUCCESS) ? SUCCESS : E_NO_DEVICE
-    if bShowDebug
-        term.fstr1(string("batt- start() status=%d\r\n"), status)
-
-PUB enableDebug(bEnable)
-'' Turn on/off this object's debug messaging.
-''
-'' @param bEnable - TRUE shows this object's debug output on the serial port
-
-    bShowDebug := bEnable
 
 PUB batteryMilliVolts() : milliVolts | sampleIdx, sortIdx, scanIdx, sampleVal, median
 '' Return the pack voltage in millivolts (median of SAMPLE_COUNT reads, divider undone).
@@ -102,8 +91,6 @@ PUB batteryMilliVolts() : milliVolts | sampleIdx, sortIdx, scanIdx, sampleVal, m
     median := rawSamples[MEDIAN_INDEX]
     ' counts -> pin millivolts (the adc owns VREF/full-scale) -> pack millivolts (undo divider)
     milliVolts := adc.rawToMillivolts(median) * DIVIDER_RATIO
-    if bShowDebug
-        term.fstr2(string("batt- median=%d -> %d mV\r\n"), median, milliVolts)
 
 PUB batteryVoltsTenths() : voltsX10
 '' Return pack voltage as volts x 10 (e.g. 74 = 7.4 V) -- handy for whole-number display.
