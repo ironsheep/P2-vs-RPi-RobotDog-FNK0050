@@ -190,12 +190,35 @@ TRIG +3, SCL +5, SDA +7** (P12 and P14 left spare). Rows are in P2-pin order.
 | **P13** | 5 | GPIO3 | **I²C SCL** | 3.3 V open-drain; **P2 supplies pull-up (`PU_1K5`)** |
 | **P14** | — | — | *spare* | unassigned |
 | **P15** | 3 | GPIO2 | **I²C SDA** → PCA9685 (servos), ADS7830 (battery), MPU6050 (IMU) | **6.9 kΩ board pull-down → `PU_1K5`** |
+| **P16** | — | — | **I²C SDA — bus 2 (voice)** → DF2301Q `0x64` | direct to the DFRobot module (not the robot header); see §3a |
+| **P18** | — | — | **I²C SCL — bus 2 (voice)** → DF2301Q `0x64` | clock-stretched bus; master honors stretch; see §3a |
 | — | 2, 4 | 5V | **Power IN from robot** → P2 board 5 V input | sized for the regulator (verify) |
 | — | 1, 17 | 3.3V | **3.3 V** ← from P2 board 3.3 V out | feed *back* to board; chips' VDD + bus reference |
 | — | 6,9,14,… | GND | Ground → **common GND** | tie robot GND ↔ P2 GND |
 
 > Map is **as-built and verified on hardware** (2026-05-31) — not a proposal. ECHO carries a
-> ~1 kΩ inline series resistor into P9 (5 V; P2 clamp). P12 and P14 are the spares.
+> ~1 kΩ inline series resistor into P9 (5 V; P2 clamp). P12 and P14 are the **only spares left**:
+> the **voice 2nd bus added P16/P18** (pin group 16, *outside* the original P8–P15 block).
+
+### 3a. 2nd I²C bus — DF2301Q voice recognizer (P2-only addition)
+
+A **DFRobot DF2301Q "Gravity" offline voice recognizer** (SKU SEN0539, I²C `0x64`) was added on the
+P2 build — it is **not** part of the stock Freenove kit. It sits on a **separate 2nd I²C bus**
+(P18 = SCL, P16 = SDA), owned by the **IO cog** (cog 2), so the two buses never cross cogs (bus 1 =
+backend/cog 1; bus 2 = IO/cog 2). The module **clock-stretches** (holds SCL low while it prepares a
+reply); the bus master (`isp_i2c`, the VAR/instance variant) honors the stretch with a bounded guard.
+
+**Power & pull-ups (bus 2):**
+
+| Item | Status | Note |
+|---|---|---|
+| Module supply | **inferred** | DF2301Q Gravity board runs at 3.3–5 V; powered from the adapter rail (confirm 3.3 vs 5 V at bench — see checklist §6). |
+| SDA/SCL pull-ups | **inferred — pending bench meter** | The Gravity board is expected to carry its **own** SDA/SCL pull-ups (vendor USER-GUIDE), so the firmware uses `PU_NONE` (`isp_io_controller.VOICE_I2C_PULLUP = 0`). **Meter SDA/SCL idle high at the bench (§7):** if the board does *not* pull up, switch to `PU_1K5` and update `VOICE_I2C_PULLUP` to match. |
+| Logic level | **inferred** | If the module is run at 5 V, its SDA/SCL idle high must be clamped/level-shifted to ≤ 3.3 V for the P2 — verify before relying on it (the bus-1 hazards in §4 apply equally). |
+
+> ⚠ This is the **open electrical item** for the voice sprint. The `voice.start()` pull-up argument
+> (`VOICE_I2C_PULLUP`) is set from the bench-metering finding; until metered it stays `PU_NONE` on
+> the vendor's "board has its own pull-ups" claim. Reconcile the code constant with the meter result.
 
 **P2 Edge reserved pins — don't use for robot I/O:** the Edge module uses **P58–P61** for
 the boot SPI flash and **P62/P63** for the serial/programming host. The **P8–P15** block
@@ -214,6 +237,7 @@ robot's 5 V and tap to re-supply header pins 1/17.
 | **Ultrasonic TRIG** | P2→sensor | P2 drives 3.3 V; HC-SR04 trigger threshold usually OK | Safe; if flaky, level-shift up to 5 V |
 | **Buzzer** | P2→board | Driving a transistor/driver from 3.3 V | Safe (output) |
 | **WS2812 data** | P2→strip | 3.3 V data into a 5 V strip (data-high threshold ≈ 0.7·Vcc) | The Pi did this at 3.3 V already; usually works. If the first pixel is unreliable, add a 3.3→5 V level shifter (74AHCT125) or power the strip at ~4.3 V |
+| **Voice SDA/SCL** (bus 2, P16/P18) | bidir | DF2301Q I²C; risk depends on module supply (3.3 V → safe; 5 V → SDA/SCL idle high exceeds 3.3 V) | **Run the module at 3.3 V if possible** (no hazard). If at 5 V, clamp/level-shift SDA & SCL to ≤ 3.3 V at the P2 (same rule as bus 1). Pull-up source per §3a — `PU_NONE` while the board self-pulls (meter at §7). |
 
 P2 pins have **configurable drive strength / pull-ups / pull-downs** (P_HIGH_FLOAT / 1K5 /
 15K / ~1 mA modes via the WRPIN M-field); set adequate drive for TRIG, buzzer, and the LED
@@ -268,6 +292,9 @@ Most of the robot is on **I²C**, so porting is mostly "implement an I²C master
       rail** — only live with Load ON.
 - [~] Establish a single **common ground** — robot grounds (pins 6/9/14) **verified consistent at 0 V (2026-05-31)**; still tie robot GND ↔ P2 GND at wiring.
 - [ ] Keep robot signals on **P0–P57**; leave **P58–P63** for flash/serial.
+- [ ] **Voice 2nd bus (P18 SCL / P16 SDA)** — meter SDA/SCL idle high: does the DF2301Q Gravity board
+      carry its **own** pull-ups? If yes, keep `VOICE_I2C_PULLUP = PU_NONE`; if no, set `PU_1K5` and
+      update the constant (§3a). Confirm the module supply rail (3.3 vs 5 V) and clamp/level-shift if 5 V.
 
 ---
 

@@ -7,12 +7,15 @@ companion to the **static** structure in [`../src/README.md`](../src/README.md) 
 tiers, files, pins). When the two overlap, this document owns runtime behavior; the README
 owns the object/tier map.
 
-> Status: **as-built for build 0.1.1; bench verification pending.** All Tier 1–4 objects exist in
-> `src/` and compile clean (PNut-ts). The three-cog wiring **is now assembled** —
-> `src/robot_dog_top.spin2` `cogspin`s the backend (cog 1) and the IO cog (cog 2) and runs a
-> scripted orchestrator on cog 0 over mailboxes A + B (the real Wi-Fi/serial command link is still
-> deferred). The IO cog's **smart-pin ultrasonic + non-blocking buzzer + frame-stepped LED** are
-> built and launched. The smooth-motion engine + full gait catalog + IMU static leveling are
+> Status: **as-built for build 0.3.0; bench verification pending.** All Tier 1–4 objects exist in
+> `src/` and compile clean (PNut-ts). The three-cog wiring **is assembled** —
+> `src/robot_dog_top.spin2` `cogspin`s the backend (cog 1) and the IO cog (cog 2) and runs the
+> **persistent dispatch loop** on cog 0 over mailboxes A + B (was a scripted orchestrator; the real
+> Wi-Fi/serial command link is still deferred — for now **voice is the command source**). The IO cog's
+> **smart-pin ultrasonic + non-blocking buzzer + frame-stepped LED** are built and launched, and it now
+> also owns the **2nd I²C bus** carrying the **DF2301Q voice recognizer**, publishing recognized CMDIDs
+> as latest-wins telemetry (the cog0 dispatch loop maps CMDID→behavior — *mapping deferred to the next
+> sprint, so it currently posts nothing*). The smooth-motion engine + full gait catalog + IMU static leveling are
 > implemented. The IK/gait/timing math and the integrated smart-pin ranging path remain flagged
 > **⚠ verify** pending the bench playbook. The behavioral contract is specified in
 > [`spec/P2-RobotDog-Specifications.md`](spec/P2-RobotDog-Specifications.md).
@@ -56,9 +59,9 @@ operative word, because a hardware resource shared across cogs is the central ha
 
 | Cog | Role | Owns (hardware) | Talks to others via |
 |-----|------|-----------------|---------------------|
-| **0** | **Comms / orchestration** | the command link (Wi-Fi/serial) only | writes command mailboxes A + B; reads telemetry + ping |
-| **1** | **Backend body-control** | **the I²C bus** (P13/P15): 13 servos, IMU, battery ADC | reads command mailbox A; writes telemetry |
-| **2** | **Discrete-pin IO** | WS2812 LED (P8), buzzer (P10), ultrasonic (ECHO P9/TRIG P11) | reads command mailbox B; writes ping/IO telemetry |
+| **0** | **Comms / dispatch** | the command link (Wi-Fi/serial) — **today the voice dispatch loop** | writes command mailboxes A + B; reads telemetry + ping + **voice** |
+| **1** | **Backend body-control** | **I²C bus 1** (P13/P15): 13 servos, IMU, battery ADC | reads command mailbox A; writes telemetry |
+| **2** | **Discrete-pin IO + voice** | WS2812 LED (P8), buzzer (P10), ultrasonic (ECHO P9/TRIG P11), **I²C bus 2 (P18/P16): DF2301Q voice `0x64`** | reads command mailbox B; writes ping/IO + **voice** telemetry |
 | 3–7 | free | — | — |
 
 Two service cogs by resource domain (backend = I²C, IO = discrete pins), each fed by a
@@ -66,10 +69,15 @@ mailbox from the comms cog. Cogs 3–7 are spare. With cooperative tasks (§3) w
 to spend a cog per concurrent activity, so we have ample headroom (e.g. a future
 behavior/autonomy cog).
 
-> **As-built (build 0.1.1):** `src/robot_dog_top.spin2` realizes this map — cog 0 runs its
-> `main()`/scripted orchestrator, `cogspin`s `isp_dog_motion.start(13,15)` onto cog 1 and
-> `isp_io_controller.start(8,10,11,9)` onto cog 2. This is the **first launch of the IO cog**. Cog
-> 0 is presently a scripted demo, not yet the real Wi-Fi/serial command link.
+> **As-built (build 0.3.0):** `src/robot_dog_top.spin2` realizes this map — cog 0 runs its
+> `main()` **persistent dispatch loop**, `cogspin`s `isp_dog_motion.start(13,15)` onto cog 1 and
+> `isp_io_controller.startWithVoice(8,10,11,9,18,16)` onto cog 2 (the 4-arg `start(...)` launches
+> voice-off). Cog 2 now also owns **I²C bus 2** (P18/P16) for the DF2301Q voice recognizer and polls
+> it in its round-robin, publishing recognized CMDIDs. Cog 0 watches that voice telemetry and
+> dispatches commands to mailbox A (gated on motion-completion) — the seed of the real Wi-Fi/serial
+> command link, which is still deferred. The legacy scripted concurrency self-test is preserved behind
+> the `DEMO_ON_BOOT` build switch. **Voice CMDID→behavior mapping is the next sprint** (the map seam
+> returns `CMD_NONE` today, so the dispatch loop traces decisions but posts nothing yet).
 
 ---
 
@@ -160,10 +168,18 @@ modeState long      ' IDLE / GAITING / GESTURE_BUSY / RELAXED / LOW_BATT
 busyFlag  long      ' 1 while a one-shot gesture is running
 
 ' === IO TELEMETRY (writer: cog 2 IO → readers: anyone) ===
-distMm    long      ' latest measured distance (the ultrasonic producer)
-pingSeq   long      ' bumps each new reading (readers detect freshness)
-ledBusy   long      ' 1 while a one-shot LED pattern is running
+distMm     long     ' latest measured distance (the ultrasonic producer)
+pingSeq    long     ' bumps each new reading (readers detect freshness)
+ledBusy    long     ' 1 while a one-shot LED pattern is running
+voiceCmdId long     ' latest recognized DF2301Q CMDID (raw; 0 = none yet)
+voiceCmdSeq long    ' bumps once per recognition (readers detect a fresh command)
 ```
+
+The **voice region mirrors the ranging producer**: `voiceCmdSeq` is the freshness counter (like
+`pingSeq`) and `voiceCmdId` the value. The IO cog (cog 2) writes value-then-seq; the cog-0 dispatch
+loop reads seq, and on advance reads the CMDID. The IO cog publishes the **raw** DF2301Q CMDID only —
+it does **not** map CMDIDs to behavior or post commands (that is the cog-0 dispatch loop's job),
+keeping it a pure peripheral server.
 
 **Handshake (lock-free, single-writer/single-reader), used identically on both command
 mailboxes:** the comms cog writes `*CmdArg[]` and `*CmdId` *first*, then bumps `*CmdSeq`
@@ -184,6 +200,7 @@ service cog, plus pure queries the comms cog answers from telemetry:
 | **Motion / posture → mailbox A** | `MOVE_*`, `TURN_*`, `BALANCE`, `HEIGHT`, `HORIZON`, **`HEAD`**, `ATTITUDE`, `RELAX`, `CALIBRATION` + gestures (push-ups, hello) | cog 1 backend | I²C bus |
 | **LED / buzzer / sonic → mailbox B** | `LED`, `LED_MOD`, `BUZZER`, `SONIC` (enable/rate) | cog 2 IO | discrete pins |
 | **Query (comms-local)** | `POWER`, `WORKING_TIME` | cog 0 answers from telemetry / IO telemetry | — |
+| **Voice (producer → cog 0)** | recognized DF2301Q CMDID (read via `getVoiceCmdId()`/`getVoiceSeq()`) | cog 2 IO publishes; **cog 0 dispatch loop** consumes → mailbox A | I²C bus 2 |
 
 `CMD_HEAD` lands in the **backend** bucket because the head-pan servo is PCA9685 ch 15 — on
 the backend's bus, not a discrete pin. A "look around and range" behavior is therefore a
@@ -427,8 +444,8 @@ Each stage **builds on the last**: the engine (1) is the fluid substrate; the mo
 - ✅ **IO-cog refactors + launch** — `isp_hcsr04` has a non-blocking **smart-pin** ranging path
   (`startSmart`/`firePing`/`echoReadyMm`), the buzzer is non-blocking (auto-off tick), and the LED
   is frame-stepped — all three multiplex on `isp_io_controller` (per D7). The **top-level cog
-  launch + mailbox B are assembled** in `src/robot_dog_top.spin2` (the comms loop is still a
-  scripted demo, not the real link).
+  launch + mailbox B are assembled** in `src/robot_dog_top.spin2` (cog 0 is now the **voice dispatch
+  loop**, the seed of the command source — the real Wi-Fi/serial link is still deferred).
 
 **Still to verify on the bench (see the verification playbook):**
 

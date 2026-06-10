@@ -81,9 +81,9 @@ as a buzzer pattern, with the P2-audio version as the eventual target.
 
 ## 4. BLE radio for remote commanding — *longer-term*
 
-**What.** A wireless command link to replace the scripted demo orchestrator, driving the **same
-mailbox command set** from a phone or gamepad — the first real realization of the still-**TODO**
-"comms cog 0" the firmware reserves a seat for.
+**What.** A wireless command link to join (or replace) the voice dispatch loop on cog 0, driving the
+**same mailbox command set** from a phone or gamepad — a fuller realization of the still-**TODO**
+"comms cog 0" the firmware reserves a seat for (voice is the first command source).
 
 **Hardware candidates (pick ONE).** [amazon.com/dp/B0DRNSV5CS](https://www.amazon.com/dp/B0DRNSV5CS)
 and [amazon.com/dp/B0GGB1L8N5](https://www.amazon.com/dp/B0GGB1L8N5) — interface **SPI / I²C**.

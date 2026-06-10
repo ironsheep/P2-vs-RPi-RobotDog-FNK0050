@@ -46,6 +46,11 @@ I²C master:
 | ADS7830 @ `0x48` | I²C | battery ADC (ch 0); **÷3 divider** (metered 2026-06-01); low-battery cutoff < 6.4 V |
 | MPU6050 @ `0x68` | I²C | 6-axis IMU for balance/attitude |
 
+A **2nd I²C bus** (P2-only addition — **not** in the stock Freenove kit) carries the **DF2301Q
+offline voice recognizer @ `0x64`** (DFRobot "Gravity" SEN0539; clock-stretches). It is on its own
+bus (P18=SCL/P16=SDA), owned by the **IO cog** (cog 2), separate from the Pi-era bus above. See the
+voice subsystem in `DOCs/spec/P2-RobotDog-Specifications.md` and `DOCs/subsystems/VoiceSensor/`.
+
 Only **three peripherals use discrete GPIO** (each a natural P2 smart-pin job):
 
 | Device | Pi GPIO (hdr pin) | Notes |
@@ -56,9 +61,11 @@ Only **three peripherals use discrete GPIO** (each a natural P2 smart-pin job):
 
 ### Committed P2 pin mapping (P8–P15)
 
-All signals route to **P2 pins P8–P15**. **As-built adapter map (verified on hardware
-2026-05-31)**, base P8 with offsets LED +0, ECHO +1, Buzzer +2, TRIG +3, SCL +5, SDA +7.
-Authoritative table + rationale: `DOCs/P2-platform/P2_MIGRATION_WIRING.md` §3.
+The original robot signals route to **P2 pins P8–P15**. **As-built adapter map (verified on hardware
+2026-05-31)**, base P8 with offsets LED +0, ECHO +1, Buzzer +2, TRIG +3, SCL +5, SDA +7. The later
+**voice 2nd bus** sits on **P16/P18** — *outside* the P8–P15 block (these were unallocated; the old
+map listed P12/P14 as the only spares). Authoritative table + rationale:
+`DOCs/P2-platform/P2_MIGRATION_WIRING.md` §3.
 
 | P2 pin | Robo hdr pin | Signal |
 |--------|--------------|--------|
@@ -67,9 +74,11 @@ Authoritative table + rationale: `DOCs/P2-platform/P2_MIGRATION_WIRING.md` §3.
 | P10 | 11 | Buzzer |
 | P11 | 13 | Ultrasonic TRIG |
 | P12 | — | spare |
-| P13 | 5 | I²C SCL |
+| P13 | 5 | I²C SCL (bus 1) |
 | P14 | — | spare |
-| P15 | 3 | I²C SDA |
+| P15 | 3 | I²C SDA (bus 1) |
+| P16 | — | I²C SDA **(bus 2, voice)** → DF2301Q @ `0x64` (direct to module, not the robot header) |
+| P18 | — | I²C SCL **(bus 2, voice)** |
 
 Servo channel map (PCA9685 PWM channels, **not** Pi GPIO): ch 2–13 are the four legs
 (3 joints each), ch 15 is the head-pan servo; angle 0–180° → count 102–512. **Verified on hardware
