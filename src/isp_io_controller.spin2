@@ -61,6 +61,8 @@ CON ' ---- voice recognizer (DF2301Q on the 2nd I2C bus) ----
   VOICE_I2C_KHZ    = 100            ' DF2301Q standard bus speed (its quick-start default)
   VOICE_I2C_PULLUP = 0              ' = isp_i2c PU_NONE (DF2301Q Gravity board carries its own SDA/SCL
                                     '   pull-ups); §6 wiring metering confirms / may change to PU_3K3 (=2)
+  VOICE_BLINK_MS   = 120           ' green "I heard something" blink duration (non-blocking)
+  VOICE_BLINK_RGB  = $00_FF_00     ' green; minimal recognition cue (full LED scheme is a later sprint)
 
 OBJ
 
@@ -103,6 +105,8 @@ DAT ' ---- internal service state (IO cog only) ----
   ioStackLongs       LONG  0
   bVoicePresent      BYTE  FALSE                              ' TRUE if the DF2301Q ACKed at startWithVoice()
   lastVoiceRaw       LONG  0                                  ' previous pollCMDID() value (0->nonzero edge detect)
+  voiceBlinking      BYTE  FALSE                              ' TRUE while a recognition blink is showing
+  voiceBlinkOffTick  LONG  0                                  ' getct() deadline to blank the recognition blink
 
 PUB null()
 '' This is not a top-level object.
@@ -310,6 +314,9 @@ PRI stepVoice() | rawId
 ' so publishing on a bare nonzero would bump the seq thousands of times for one recognition. The device
 ' clears its result register on read, so two identical words in a row still show a 0 between them --
 ' each genuine recognition is one 0->nonzero edge -> exactly one seq bump (even when the CMDID repeats).
+' Each fresh recognition also fires a brief green ring blink ("I heard something") -- non-blocking and
+' self-expiring below; it re-arms on each recognition so rapid words never leave the ring stuck on.
+' Minimal this sprint: green only -- no red/spinning states (those need command->behavior mapping, later).
 '
 ' Local Variables:
 ' @local rawId - this pass's pollCMDID() result (0 = nothing recognized)
@@ -319,7 +326,18 @@ PRI stepVoice() | rawId
         if rawId <> 0 and lastVoiceRaw == 0
             voiceCmdId := rawId                               ' publish value first...
             voiceCmdSeq++                                     ' ...then bump seq (readers detect "new" by seq)
+            ring.setColor(VOICE_BLINK_RGB)                    ' start the green recognition blink
+            ring.setMode(ring.MODE_SOLID)
+            ring.update()
+            ledActive := FALSE                                ' static show -- keep stepLed from animating over it
+            ledBusy := FALSE
+            voiceBlinkOffTick := getct() + (VOICE_BLINK_MS * msTicks)
+            voiceBlinking := TRUE
         lastVoiceRaw := rawId
+        if voiceBlinking and due(voiceBlinkOffTick)           ' blink expired -> ring back to off
+            ring.setMode(ring.MODE_OFF)
+            ring.update()
+            voiceBlinking := FALSE
 
 PRI publishDistance(milliMeters)
 ' Publish a ranging result and re-arm the next ping.
