@@ -1,0 +1,113 @@
+'' =================================================================================================
+''   File....... test_led_engine.spin2
+''   Purpose.... AUTO-RUN bench check for isp_led_engine: drives the WS2812 ring (P8) ONLY -- no IO
+''               cog, no servos, no IMU. Exercises sustained base effects, single-shot cues, the
+''               latest-wins preempt, and revert-to-base (the stuck-on fix). Safe with the dog
+''               unpowered/unsupported.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Watch the RING while reading the log. Each phase narrates what the ring should do.
+'  Run: pnut-ts -d -q test_led_engine.spin2  then  pnut-term-ts -r test_led_engine.bin -b 2000000
+'  (headless: add  --headless --end-marker "LED_ENGINE_DONE" --timeout 60)
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+
+  PIN_WS2812  = 8                                             ' WS2812 ring data (committed adapter map)
+  MS_PER_SEC_DIV = 1000                                      ' clkfreq / 1000 = ticks per millisecond
+
+  ' local mirror of isp_led_ring MODE_* (same pattern robot_dog_top uses for IO_LED_MODE args)
+  LED_MODE_WIPE            = 2
+  LED_MODE_CHASE           = 3
+  LED_MODE_RAINBOW_CYCLE   = 5
+  LED_MODE_RAINBOW_BREATHE = 6
+
+  ' packed $RRGGBB test colors
+  RGB_RED   = $FF_00_00
+  RGB_GREEN = $00_FF_00
+  RGB_BLUE  = $00_00_FF
+  RGB_WHITE = $FF_FF_FF
+
+OBJ
+  led : "isp_led_engine"                                     ' the engine under test (owns the ring)
+
+PUB main()
+'' Run the scripted LED-engine exercise, narrating each phase, then end on a marker.
+''
+
+    waitms(100)
+    DEBUG("=== LED engine bench check (ring on P", udec_(PIN_WS2812), ") ===")
+    led.start(PIN_WS2812)
+
+    DEBUG("base SOLID: red, green, blue (1.5s each) -- steady colors")
+    led.showSolid(RGB_RED)
+    holdMs(1500)
+    led.showSolid(RGB_GREEN)
+    holdMs(1500)
+    led.showSolid(RGB_BLUE)
+    holdMs(1500)
+
+    DEBUG("base CHASE (~4s) -- lit pixels MARCH around the ring at a readable pace (~130ms/step)")
+    led.showMode(LED_MODE_CHASE)
+    holdMs(4000)
+
+    DEBUG("base WIPE (~4s) -- pixels light up one-by-one around the ring, then clear and repeat")
+    led.showMode(LED_MODE_WIPE)
+    holdMs(4000)
+
+    DEBUG("base RAINBOW_CYCLE (~8s) -- SLOW smooth hue cycle around the ring (~7.7s for one full lap)")
+    led.showMode(LED_MODE_RAINBOW_CYCLE)
+    holdMs(8000)
+
+    DEBUG("base RAINBOW_BREATHE (~8s) -- rotating rainbow whose brightness breathes dim<->bright")
+    led.showMode(LED_MODE_RAINBOW_BREATHE)
+    holdMs(8000)
+
+    DEBUG("single-shot WHITE cue OVER a running CHASE -- white flash, then the CHASE RESUMES (x2)")
+    led.showMode(LED_MODE_CHASE)
+    holdMs(1500)
+    led.blink(RGB_WHITE, 150)
+    holdMs(1800)
+    led.blink(RGB_WHITE, 150)
+    holdMs(1800)
+
+    DEBUG("base OFF")
+    led.off()
+    holdMs(1000)
+
+    DEBUG("PREEMPT test: green cue, re-fire 100ms in -> 2nd wins/restarts, then reverts to OFF (no stuck-on)")
+    led.blink(RGB_GREEN, 600)
+    holdMs(100)
+    led.blink(RGB_GREEN, 600)                                ' latest-wins: restarts the green cue
+    holdMs(1500)
+
+    DEBUG("recognition sim: 4 green cues over OFF base -- each flashes and reverts to OFF (the fixed case)")
+    repeat 4
+        led.blink(RGB_GREEN, 120)
+        holdMs(900)
+
+    led.off()
+    holdMs(300)
+    DEBUG("LED_ENGINE_DONE")
+    repeat
+        led.service()
+
+PRI holdMs(durationMs) | deadline
+' Service the engine continuously for durationMs (lets overlays expire and animations advance).
+'
+' @param durationMs - how long to keep servicing, milliseconds
+' @local deadline - getct() deadline for the hold
+
+    deadline := getct() + (durationMs * (clkfreq / MS_PER_SEC_DIV))
+    repeat
+        led.service()
+        if (getct() - deadline) >= 0
+            quit
+
+CON ' ---- License ----
+
+{{
+  MIT License -- Copyright (c) 2026 Iron Sheep Productions, LLC. See isp_led_engine.spin2 for full terms.
+}}

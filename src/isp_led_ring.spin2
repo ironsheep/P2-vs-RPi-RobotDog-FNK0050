@@ -32,7 +32,8 @@ CON ' ---- display modes ----
   '  MODE_CHASE         - theater-chase of the current color
   '  MODE_RAINBOW       - rainbow that scrolls across all pixels
   '  MODE_RAINBOW_CYCLE - rainbow distributed across the ring, rotating
-  #0, MODE_OFF, MODE_SOLID, MODE_WIPE, MODE_CHASE, MODE_RAINBOW, MODE_RAINBOW_CYCLE
+  '  MODE_RAINBOW_BREATHE - rotating rainbow whose brightness breathes (dim/bright) up and down
+  #0, MODE_OFF, MODE_SOLID, MODE_WIPE, MODE_CHASE, MODE_RAINBOW, MODE_RAINBOW_CYCLE, MODE_RAINBOW_BREATHE
 
 CON ' ---- color-wheel & chase ----
   COLOR_WHEEL_SPAN = 256            ' rainbow wheel positions
@@ -41,6 +42,8 @@ CON ' ---- color-wheel & chase ----
   WHEEL_SLOPE      = 3              ' intensity ramp per wheel step (~255/85)
   COLOR_MAX        = 255
   CHASE_SPACING    = 3              ' every 3rd pixel lit in theater chase
+  BREATHE_STEPS    = 3              ' brightness breaths per full hue rotation (breathes faster than the hue rotates)
+  BREATHE_FLOOR    = 24             ' minimum brightness scale -- breathe dims toward this, never fully dark
 
 OBJ
 
@@ -73,7 +76,7 @@ PUB setMode(modeId)
 ''
 '' @param modeId - one of MODE_OFF..MODE_RAINBOW_CYCLE
 
-    currentMode := MODE_OFF #> modeId <# MODE_RAINBOW_CYCLE
+    currentMode := MODE_OFF #> modeId <# MODE_RAINBOW_BREATHE
     animPhase := 0
     wipeIndex := 0
 
@@ -91,7 +94,7 @@ PUB setBrightness(level)
 
     strip.setBrightness(level)
 
-PUB update() | pixelIdx, red, grn, blu
+PUB update() | pixelIdx, red, grn, blu, breath
 '' Advance the current mode by one animation frame and latch the ring. Non-blocking.
 ''
 
@@ -100,6 +103,7 @@ PUB update() | pixelIdx, red, grn, blu
 ' @local red - red channel from the color wheel
 ' @local grn - green channel from the color wheel
 ' @local blu - blue channel from the color wheel
+' @local breath - breathing brightness scale (MODE_RAINBOW_BREATHE only)
 
     case currentMode
         MODE_OFF:
@@ -131,6 +135,15 @@ PUB update() | pixelIdx, red, grn, blu
                 red, grn, blu := wheel((pixelIdx * COLOR_WHEEL_SPAN / strip.NUM_PIXELS) + animPhase)
                 strip.setPixelColor(pixelIdx, red, grn, blu)
             strip.show()
+        MODE_RAINBOW_BREATHE:
+            breath := breatheLevel(animPhase)
+            repeat pixelIdx from 0 to strip.NUM_PIXELS - 1
+                red, grn, blu := wheel((pixelIdx * COLOR_WHEEL_SPAN / strip.NUM_PIXELS) + animPhase)
+                red := (red * breath) / COLOR_WHEEL_SPAN
+                grn := (grn * breath) / COLOR_WHEEL_SPAN
+                blu := (blu * breath) / COLOR_WHEEL_SPAN
+                strip.setPixelColor(pixelIdx, red, grn, blu)
+            strip.show()
     animPhase := (animPhase + 1) & COLOR_WHEEL_MASK
 
 PRI wheel(wheelPos) : red, grn, blu
@@ -156,6 +169,20 @@ PRI wheel(wheelPos) : red, grn, blu
         wheelPos -= (WHEEL_SEGMENT * 2)
         grn := wheelPos * WHEEL_SLOPE
         blu := COLOR_MAX - wheelPos * WHEEL_SLOPE
+
+PRI breatheLevel(phase) : level | tri
+' Triangle brightness envelope for MODE_RAINBOW_BREATHE: ramps up then down BREATHE_STEPS times per full
+' hue rotation, floored at BREATHE_FLOOR so the ring dims but never goes fully dark. Used as a /256 scale.
+'
+' @param phase - animation phase 0..255
+' @returns level - brightness scale, BREATHE_FLOOR..COLOR_MAX
+' @local tri - raw triangle position before the floor map
+
+    tri := (phase * BREATHE_STEPS) & COLOR_WHEEL_MASK
+    if tri >= (COLOR_WHEEL_SPAN / 2)
+        tri := (COLOR_WHEEL_SPAN - 1) - tri                 ' fold the upper half down -> 0..127
+    tri := tri * 2                                          ' 0..254 triangle
+    level := BREATHE_FLOOR + ((tri * (COLOR_MAX - BREATHE_FLOOR)) / COLOR_MAX)
 
 CON ' ---- License ----
 

@@ -120,23 +120,23 @@ PUB main() | backendCog, ioCog
     waitms(100)
     DEBUG("=== P2 RoboDog 3-COG RUNTIME ===")
     DEBUG("    firmware v", udec_(version.FW_VERSION_MAJOR), ".", udec_(version.FW_VERSION_MINOR), ".", udec_(version.FW_VERSION_PATCH))
-    DEBUG("    cog0 dispatch loop (this) | cog1 backend/I2C | cog2 IO/discrete pins + voice bus")
-    DEBUG(">> LIFT / SUPPORT THE ROBOT. cog1 will calibrate gyro (hold still) then STAND. <<")
+    DEBUG("    cog0 dispatch loop (this) | cog1 IO/discrete pins + voice bus | cog2 backend/I2C")
+    DEBUG(">> LIFT / SUPPORT THE ROBOT. the backend cog will calibrate gyro (hold still) then STAND. <<")
     countdown()
 
     stack.prepStackForCheck(@ioStack, COG_STACK)             ' fill pattern + sentinel BEFORE launch
     stack.prepStackForCheck(@backendStack, COG_STACK)
 
-    ' ---- bring cog2 (IO) up first: it owns no shared bus, so it is alive instantly ----
+    ' ---- bring the IO cog up first (lands in cog1): it owns no shared bus, so it is alive instantly ----
     ioCog := cogspin(NEWCOG, io.startWithVoice(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO, PIN_VSCL, PIN_VSDA), @ioStack)
     if ioCog < 0
         abortDemo(string("FAILED to start IO cog"))
     io.setStackCheck(@ioStack, COG_STACK)                    ' IO cog now self-watches its stack
     DEBUG("IO cog launched in cog ", udec_(ioCog), " (LED P8, buzzer P10, ultrasonic P9/P11, voice P", udec_(PIN_VSCL), "/P", udec_(PIN_VSDA), ")")
-    io.postCommand(io.IO_LED_SOLID, COLOR_GREEN, 0, 0, 0)     ' visible "cog2 alive" before cog1 even inits
+    io.postCommand(io.IO_LED_SOLID, COLOR_GREEN, 0, 0, 0)     ' visible "IO cog alive" before the backend even inits
     io.postCommand(io.IO_BUZZ_BEEP, 120, 0, 0, 0)             ' short hello chirp
 
-    ' ---- bring cog1 (backend) up: it owns the I2C bus, inits, calibrates gyro, STANDS ----
+    ' ---- bring the backend cog up next (lands in cog2): it owns the I2C bus, inits, calibrates gyro, STANDS ----
     backendCog := cogspin(NEWCOG, dog.start(PIN_SCL, PIN_SDA), @backendStack)
     if backendCog < 0
         abortDemo(string("FAILED to start backend cog"))

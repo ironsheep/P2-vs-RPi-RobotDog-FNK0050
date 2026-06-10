@@ -1,0 +1,230 @@
+'' =================================================================================================
+''
+''   File....... isp_led_engine.spin2
+''   Purpose.... TIER-4 LED engine: the SOLE owner of the WS2812 ring. Callers request an effect
+''               (a sustained base, or a single-shot cue) and the engine drives the ring from a
+''               stepped state machine, reverting cleanly when a cue ends. Removes the multi-writer
+''               race that left the recognition blink stuck on.
+''   Authors.... Stephen M Moraco
+''               -- Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see below for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... 10 June 2026
+''   Updated.... 10 June 2026
+''
+'' =================================================================================================
+
+{ Description and usage notes:
+
+   Sits on isp_led_ring (which owns modes/effects) and is the ONLY thing that touches the ring.
+   Everything else -- IO commands, the voice recognition cue, mode/status indication -- REQUESTS an
+   effect; it never pokes the ring. One owner, one writer: that is what fixes the stuck-on blink (the
+   old path had the command handler, the animation stepper, and the voice blink all writing the ring).
+
+   Two kinds of effect:
+
+   +----------------------+------------------------------------------------------------------+
+   | BASE (sustained)     | off / solid / wipe / chase / rainbow / rainbow-cycle. Runs until |
+   |                      | replaced. This is the steady state -- idle, mode indication, ... |
+   +----------------------+------------------------------------------------------------------+
+   | OVERLAY (single-shot)| blink(rgb, ms): show briefly, then REVERT to the base. Transient  |
+   |                      | cues (e.g. "I heard a command"). LATEST-WINS: a new single-shot   |
+   |                      | preempts the one in flight and restarts -- it never queues or     |
+   |                      | rejects (approved policy for transient cues).                     |
+   +----------------------+------------------------------------------------------------------+
+
+   The engine is STEPPED, not a cog: call step() once per service pass from the owning cog's loop
+   (the IO cog). step() is non-blocking -- it advances an animation frame when due, or reverts an
+   expired overlay, and otherwise returns immediately.
+
+   isBusy()   -> a single-shot overlay is in progress (the gate signal a caller can wait on).
+   isActive() -> the ring is doing something dynamic (overlay OR an animated base) -- telemetry.
+}
+
+CON ' ---- tuning ----
+  LED_FRAME_MS      = 30                                       ' smooth-animation frame period (rainbow / breathe)
+  LED_FRAME_SLOW_MS = 130                                      ' marching-effect frame period (chase / wipe -- visible steps)
+  MS_PER_SEC_DIV    = 1000                                     ' clkfreq / 1000 = ticks per millisecond
+  DEFAULT_COLOR     = $FF_FF_FF                                ' white -- matches the strip's power-on default
+
+OBJ
+
+  ring : "isp_led_ring"                                        ' TIER-3 ring modes/effects (owns the strip)
+
+DAT ' ---- engine state (singleton) ----
+
+  msTicks         LONG  0
+  frameTicks      LONG  0                                      ' smooth-animation frame period (rainbow / breathe)
+  slowFrameTicks  LONG  0                                      ' marching-effect frame period (chase / wipe)
+  baseMode        LONG  0                                      ' sustained base mode (set to MODE_OFF in start)
+  baseColor       LONG  DEFAULT_COLOR                          ' color the base reverts to after an overlay
+  baseDirty       LONG  FALSE                                  ' TRUE: base needs a (re)render on the next step
+  nextFrameTick   LONG  0                                      ' getct() deadline for the next animation frame
+  overlayOn       LONG  FALSE                                  ' TRUE while a single-shot overlay is showing
+  overlayOffTick  LONG  0                                      ' getct() deadline to end the overlay
+
+PUB null()
+'' This is not a top-level object.
+''
+
+PUB start(pinNumber)
+'' Bring up the ring and start idle (base = OFF, no overlay).
+''
+'' @param pinNumber - P2 pin driving the WS2812 data line
+
+    ring.start(pinNumber)
+    msTicks := clkfreq / MS_PER_SEC_DIV
+    frameTicks := LED_FRAME_MS * msTicks
+    slowFrameTicks := LED_FRAME_SLOW_MS * msTicks
+    baseMode := ring.MODE_OFF
+    baseColor := DEFAULT_COLOR
+    overlayOn := FALSE
+    baseDirty := TRUE                                          ' render the OFF base on the first step
+    nextFrameTick := getct()
+
+PUB off()
+'' Request the OFF base (all pixels dark), sustained.
+''
+
+    setBase(ring.MODE_OFF, baseColor)
+
+PUB showSolid(rgb)
+'' Request a sustained solid color on the whole ring.
+''
+'' @param rgb - packed $RRGGBB color
+
+    setBase(ring.MODE_SOLID, rgb)
+
+PUB showMode(modeId)
+'' Request a sustained display mode (off/solid/wipe/chase/rainbow/cycle); animated modes auto-step.
+''
+'' @param modeId - an isp_led_ring MODE_* id
+
+    setBase(modeId, baseColor)
+
+PUB setColor(rgb)
+'' Set the color used by the solid/wipe/chase base effects (re-renders the base if no overlay is up).
+''
+'' @param rgb - packed $RRGGBB color
+
+    baseColor := rgb
+    if not overlayOn
+        baseDirty := TRUE
+
+PUB setBrightness(level)
+'' Set master ring brightness [0..255]; re-latches the current base on the next step.
+''
+'' @param level - brightness [0..255]
+
+    ring.setBrightness(level)
+    baseDirty := TRUE
+
+PUB blink(rgb, durationMs)
+'' Show a single-shot solid-color cue for durationMs, then revert to the base. Latest-wins: a new
+'' blink preempts one already showing and restarts it (it never queues or rejects).
+''
+'' @param rgb - packed $RRGGBB cue color
+'' @param durationMs - how long to show the cue, milliseconds
+
+    ring.setColor(rgb)
+    ring.setMode(ring.MODE_SOLID)
+    ring.update()                                              ' show the cue now (preempts any prior overlay)
+    overlayOffTick := getct() + (durationMs * msTicks)
+    overlayOn := TRUE
+
+PUB service()
+'' Advance the engine one service tick: expire an overlay (reverting to the base), or advance an
+'' animated base one frame when due. Non-blocking; call once per owning-cog service pass.
+''
+
+    if overlayOn and due(overlayOffTick)
+        overlayOn := FALSE
+        baseDirty := TRUE                                      ' revert: re-render the base this pass
+    if not overlayOn
+        if baseDirty
+            renderBase()
+        elseif baseMode >= ring.MODE_WIPE and due(nextFrameTick)
+            ring.update()                                      ' advance the animation one frame
+            nextFrameTick := getct() + baseFrameTicks()
+
+PUB isBusy() : bBusy
+'' Return TRUE while a single-shot overlay is in progress (the gate signal: "do not command yet").
+''
+'' @returns bBusy - TRUE if a single-shot cue is currently showing
+
+    bBusy := overlayOn
+
+PUB isActive() : bActive
+'' Return TRUE while the ring is doing something dynamic: a single-shot overlay OR an animated base.
+''
+'' @returns bActive - TRUE if an overlay or an animated base mode is running
+
+    bActive := overlayOn or (baseMode >= ring.MODE_WIPE)
+
+PRI setBase(modeId, rgb)
+' Latch a new sustained base effect; it renders on the next step() when no overlay is active (so a
+' base change made under a live overlay shows through the moment the overlay ends).
+'
+' @param modeId - an isp_led_ring MODE_* id (clamped to the valid range)
+' @param rgb - packed $RRGGBB color the base uses
+
+    baseMode := ring.MODE_OFF #> modeId <# ring.MODE_RAINBOW_BREATHE
+    baseColor := rgb
+    baseDirty := TRUE
+
+PRI renderBase()
+' Restore the base color+mode and latch one frame, then arm the animation frame clock. Clears the
+' dirty flag. Used on a base change and when an overlay reverts.
+
+    ring.setColor(baseColor)
+    ring.setMode(baseMode)
+    ring.update()
+    nextFrameTick := getct() + baseFrameTicks()
+    baseDirty := FALSE
+
+PRI baseFrameTicks() : ticks
+' Frame period for the current base mode: the marching effects (chase/wipe) step slowly so the motion
+' reads clearly; the smooth effects (rainbow/breathe) step fast so they look continuous.
+'
+' @returns ticks - getct() interval until the next animation frame
+
+    if baseMode == ring.MODE_CHASE or baseMode == ring.MODE_WIPE
+        ticks := slowFrameTicks
+    else
+        ticks := frameTicks
+
+PRI due(deadlineTick) : bDue
+' Wrap-safe "is this getct() deadline reached?" check.
+'
+' @param deadlineTick - the getct() value to compare against
+' @returns bDue - TRUE once getct() has reached/passed deadlineTick
+
+    bDue := (getct() - deadlineTick) >= 0
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}
