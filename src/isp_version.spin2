@@ -7,7 +7,7 @@
 ''               -- see below for terms of use
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... May 2026
-''   Updated.... 31 May 2026
+''   Updated.... 10 June 2026
 ''
 '' =================================================================================================
 
@@ -22,7 +22,7 @@ CON ' ---- firmware version ----
   {Spin2_Doc_CON}
   ' Semantic version MAJOR.MINOR.PATCH of the Robot Dog P2 firmware:
   FW_VERSION_MAJOR = 0
-  FW_VERSION_MINOR = 2
+  FW_VERSION_MINOR = 3
   FW_VERSION_PATCH = 0
 
 PUB null()

@@ -1,9 +1,24 @@
 # VOICE-INTEGRATION — Sprint Plan
 
-**Status:** planned (research complete; ready for `sprint-start`)
+**Status:** STARTED 2026-06-10 (sprint-start complete; tasks generated next)
 **Project build at plan time:** 0.2.0 (`src/isp_version.spin2`; bump is a `sprint-start` decision)
+**Shipping as build:** **0.3.0** (minor bump — new voice subsystem; agreed with Stephen at sprint-start 2026-06-10)
 **This is the LAST planned sprint.** See [[project-status]] sequence and the design note
 [[voice-integration-design]].
+
+---
+
+## Sprint-start record (2026-06-10)
+
+- **Build number:** shipping as **0.3.0** (minor bump for the new voice subsystem; agreed with
+  Stephen). `src/isp_version.spin2` bumped 0.2.0 → 0.3.0.
+- **Working-tree audit:** clean — no tracked or untracked changes; all prebuilt voice files
+  (`isp_voice_recognizer`, `isp_voice_command_names`, `isp_i2c`, `custom_words_example`) committed
+  and present. Foundation is committed.
+- **Tracking-readiness (entry):** READY — archived 7 completed DOG-LIKE-MOTION-01 tasks; deleted the
+  consumed `temp_voice_sprint_plan_seed` key; board clean. `sprint_resume_voice` kept as live pointer.
+- **Entry baseline (baseline-health):** **GREEN — 44/44** objects compile (`pnut-ts -q` sweep over
+  `src/`). This is the exit gate to check against at closeout.
 
 ---
 
