@@ -117,12 +117,16 @@ PUB cmdName(cmdId) : pStr
 '' @returns pStr - pointer to the phrase ((none) for 0, registered/(custom) for 5..21, (unknown) if unmapped)
 
   pStr := @nm_unknown                                          ' default: ID-space gaps and out-of-range
+  ' Resolve via the explicit typed form @@WORD[@table][i] (Spin2 KB "lookup table of @offsets" idiom):
+  ' read the stored object-relative WORD offset, THEN add the object base. The bare @@nmTbl_0[i] form
+  ' mis-compiled under pnut-ts -- it yielded the table-ENTRY address, so zstr_() walked the (zero-free)
+  ' offset table and dumped it as binary (one byte was $1B = DEBUG_END_SESSION). Fixed 2026-06-10.
   case cmdId
-    0..2:      pStr := @@nmTbl_0[cmdId]
+    0..2:      pStr := @@WORD[@nmTbl_0][cmdId]
     5..21:     pStr := customWord(cmdId)
-    22..27:    pStr := @@nmTbl_22[cmdId - 22]
-    29..142:   pStr := @@nmTbl_29[cmdId - 29]
-    200..208:  pStr := @@nmTbl_200[cmdId - 200]
+    22..27:    pStr := @@WORD[@nmTbl_22][cmdId - 22]
+    29..142:   pStr := @@WORD[@nmTbl_29][cmdId - 29]
+    200..208:  pStr := @@WORD[@nmTbl_200][cmdId - 200]
 
 
 DAT ' ---- Command-Word Phrase Table (dense indexed) ----

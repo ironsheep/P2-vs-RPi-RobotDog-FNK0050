@@ -78,7 +78,7 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
   untouched IO-cog test tops (`test_dog_gaits/level/tricks/stand/panel`) and `custom_words_example`
   still compile.
 - **PASS TELL:** `rc=0`, every file reports `Wrote …` with no error.
-- **Pass/fail:** `[ ]`  45/45 green? ______
+- **Pass/fail:** `[x]`  45/45 green? **YES — 45/45, 2026-06-10** (re-confirmed after the `cmdName` `@@` fix).
 
 ---
 
@@ -117,8 +117,27 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
   4. you **hear the module's own verbal ACK** and see **one green LED-ring blink** per recognition.
 - **If FAIL:** `voice present = F` → re-check Ex 1 wiring/pull-up/rail; wrong/absent IDs → confirm the
   module's command-word card matches the catalog; no blink → check the WS2812 (LED is on the IO cog).
-- **Pass/fail:** `[ ]`  present=T? ___ · correct CMDIDs+phrases? ___ · unknown prints nothing? ___ ·
-  verbal ACK + green blink? ___
+- **Bench result 2026-06-10** (`src/logs/debug_260610-114927.log` + earlier runs):
+  - **`voice present = T`** — module ACKs on bus 2 at `$64`. **PASS.**
+  - **Recognition works** — real built-in IDs arrived: **CMDID 2** (Hello Robot / wake) and **CMDID 22**
+    (Go Forward). The IO-cog telemetry (`getVoiceSeq`/`getVoiceCmdId`) + 0→nonzero edge-detect are
+    proven. **PASS (numeric IDs).**
+  - **Phrase display** — initially `zstr_(names.cmdName(cmdId))` dumped the (zero-free) name-offset
+    table as binary, and a `$1B` byte in it tripped `DEBUG_END_SESSION`, ending the capture early
+    (looked like a premature timeout). **Root cause:** `cmdName` used the bare `@@nmTbl_0[i]` form,
+    which under pnut-ts returned the table-entry address instead of resolving the stored offset.
+    **Fixed** → explicit `@@WORD[@nmTbl_0][i]` idiom (`isp_voice_command_names.spin2`).
+    **CONFIRMED on hardware** (`src/logs/debug_260610-120132.log`): 10 recognitions, every CMDID→phrase
+    pair correct vs `COMMAND-CATALOG.md`, spanning all three tables — CMDID **2** `Hello Robot`
+    (`nmTbl_0`), **22/23/24** `Go Forward`/`Retreat`/`Park A Car` (`nmTbl_22`), and
+    **36/39/42/48/68** `Face Recognition`/`Line Tracking`/`Object Sorting`/`Load Model`/`Read Compass`
+    (`nmTbl_29`). Clean run, no binary, full duration. **PASS.**
+  - **Green LED blink** — came **on at the first recognition but stayed solid** (did not self-clear /
+    re-blink). **FINDING → carries to the LED-feedback work** (see below); the imperative blink in
+    `stepVoice` races the LED animator. Not blocking recognition.
+- **Pass/fail:** `[x]`  present=T? **YES** · correct CMDIDs+phrases? **YES — 10/10 correct vs catalog,
+  3 tables (log 120132)** · unknown prints nothing? **not yet exercised** · verbal ACK? **___** ·
+  green blink? **DEFECT (stuck on) — see LED-feedback note**
 
 ---
 

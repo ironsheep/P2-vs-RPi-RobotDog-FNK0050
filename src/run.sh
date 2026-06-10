@@ -39,4 +39,4 @@ fi
 
 # 4. compile OK -> download to RAM and run @ 2 Mbaud (exec so Ctrl-C goes to the terminal)
 echo ">> download-to-RAM + run ${FILE}.bin @ ${BAUD} baud ..."
-exec pnut-term-ts -r "$BIN" -b "$BAUD"
+exec pnut-term-ts -u -r "$BIN" -b "$BAUD"
