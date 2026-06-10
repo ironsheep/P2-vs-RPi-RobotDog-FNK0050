@@ -109,6 +109,27 @@ DAT ' ---- cog launch stacks, each followed IMMEDIATELY by its overflow sentinel
   ioStack          LONG  0[COG_STACK]                        ' cog2 stack
   ioStackMark      LONG  stack.DO_NOT_WRITE_MARK
 
+DAT ' ---- dog custom-word vocabulary (training order == CMDID 5..21; see DOCs/subsystems/VoiceSensor/VOICE-COMMAND-MAP.md) ----
+  dogVocab
+    byte  5, "Stand", 0
+    byte  6, "Sit", 0
+    byte  7, "Lie Down", 0
+    byte  8, "Crouch", 0
+    byte  9, "Relax", 0
+    byte 10, "Bow", 0
+    byte 11, "Forward", 0
+    byte 12, "Backward", 0
+    byte 13, "Turn Left", 0
+    byte 14, "Turn Right", 0
+    byte 15, "Halt", 0
+    byte 16, "Wave", 0
+    byte 17, "Shake", 0
+    byte 18, "Salute", 0
+    byte 19, "Push Ups", 0
+    byte 20, "Nod", 0
+    byte 21, "Parade Rest", 0
+    byte  0                                                   ' end-of-table marker
+
 VAR
 
   long  lastPingSeq                                          ' previous ranging seq (freshness detector)
@@ -145,6 +166,7 @@ PUB main() | backendCog, ioCog
     waitms(BACKEND_INIT_MS)
     reportTelemetry(string("after init + initial STAND"))
     DEBUG("voice present  = ", zstr_(io.voicePresent() ? string("T (DF2301Q ACKed on bus 2)") : string("F (module absent/off -- dispatch loop idles)")))
+    names.registerCustomTable(@dogVocab)                     ' so the dispatch log resolves CMDID 5..21 to phrases
 
     if DEMO_ON_BOOT
         runConcurrentDemo()                                  ' legacy D7 self-test path
@@ -165,7 +187,7 @@ PRI dispatchLoop() | lastVoiceSeq, curVoiceSeq, voiceId, dogCmd
 ' @local voiceId - latest recognized DF2301Q CMDID
 ' @local dogCmd - the dog CMD_* the map seam yields (CMD_NONE every time this sprint)
 
-    DEBUG("-- dispatch loop: listening for voice (map seam returns CMD_NONE this sprint -> nothing posts) --")
+    DEBUG("-- dispatch loop: listening for voice (Peabody) -- mapped words post to the backend through the gate --")
     lastVoiceSeq := io.getVoiceSeq()
     repeat
         curVoiceSeq := io.getVoiceSeq()
@@ -178,20 +200,37 @@ PRI dispatchLoop() | lastVoiceSeq, curVoiceSeq, voiceId, dogCmd
         waitms(DISPATCH_POLL_MS)
 
 PRI voiceToDogCmd(voiceCmdId) : dogCmd
-' MAP SEAM (sprint-deferred): translate a DF2301Q voice CMDID into a dog CMD_* behavior.
-' >> THIS SPRINT this returns CMD_NONE for EVERY input. << The recognized-word -> behavior table is
-' the NEXT sprint's deliverable; filling it touches ONLY this one function. Keeping the seam here now
-' makes the dispatch loop real and reviewable without committing to any word->behavior assignment.
+' Translate a DF2301Q voice CMDID into a dog CMD_* behavior. Custom slots 5..21 are the dog vocabulary
+' trained on the device (see DOCs/subsystems/VoiceSensor/VOICE-COMMAND-MAP.md and the dogVocab DAT --
+' the slot order is the device's training order). Any other CMDID (the wake word, mis-hears, untrained
+' slots) maps to CMD_NONE so the dispatch loop ignores it.
 '
-' @param voiceCmdId - raw DF2301Q command-word ID from the voice telemetry (unused until the map exists)
-' @returns dogCmd - the dog CMD_* to post, or CMD_NONE to ignore (always CMD_NONE this sprint)
+' @param voiceCmdId - raw DF2301Q command-word ID from the voice telemetry
+' @returns dogCmd - the dog CMD_* to post, or CMD_NONE to ignore
 
     dogCmd := dog.CMD_NONE
+    case voiceCmdId
+        5:  dogCmd := dog.CMD_STAND
+        6:  dogCmd := dog.CMD_SIT
+        7:  dogCmd := dog.CMD_LIE_DOWN
+        8:  dogCmd := dog.CMD_CROUCH
+        9:  dogCmd := dog.CMD_RELAX
+        10: dogCmd := dog.CMD_BOW
+        11: dogCmd := dog.CMD_FORWARD
+        12: dogCmd := dog.CMD_BACKWARD
+        13: dogCmd := dog.CMD_TURN_LEFT
+        14: dogCmd := dog.CMD_TURN_RIGHT
+        15: dogCmd := dog.CMD_STOP
+        16: dogCmd := dog.CMD_HELLO                          ' "Wave"
+        17: dogCmd := dog.CMD_SHAKE
+        18: dogCmd := dog.CMD_SALUTE
+        19: dogCmd := dog.CMD_PUSHUPS
+        20: dogCmd := dog.CMD_NOD
+        21: dogCmd := dog.CMD_PARADE_REST
 
 PRI dispatchToBackend(dogCmd) | bComplete, mode, bBusy, bHalted, bGate
-' Motion-gate SKELETON: from existing backend signals decide whether dogCmd could hand off to
-' mailbox A RIGHT NOW, DEBUG-trace the decision, and post only when mapped AND allowed. Because the
-' map seam yields CMD_NONE this sprint, NO dog.postCommand ever fires here -- but the gate is real.
+' Motion gate: from existing backend signals decide whether dogCmd could hand off to mailbox A RIGHT
+' NOW, DEBUG-trace the decision, and post only when mapped AND allowed (CMD_NONE -> ignored).
 '
 ' Gate policy (mirrors the panel's button->command rules):
 '   - isHalted (critical-battery hard floor latched): SUPPRESS every handoff -- the backend refuses motion.
@@ -220,9 +259,9 @@ PRI dispatchToBackend(dogCmd) | bComplete, mode, bBusy, bHalted, bGate
     DEBUG("  gate: dogCmd=", udec_(dogCmd), " mode=", udec_(mode), " moveDone=", udec_(bComplete ? 1 : 0), " busy=", udec_(bBusy ? 1 : 0), " halted=", udec_(bHalted ? 1 : 0), " -> ", zstr_(bGate ? string("HANDOFF") : string("withhold")))
 
     if dogCmd == dog.CMD_NONE
-        DEBUG("  -> no behavior mapped (CMD_NONE); nothing posted (word->behavior map is next sprint)")
+        DEBUG("  -> no behavior mapped for this CMDID (CMD_NONE); ignored")
     elseif bGate
-        dog.postCommand(dogCmd, 0, 0, 0, 0)                  ' (unreachable this sprint -- seam yields CMD_NONE)
+        dog.postCommand(dogCmd, 0, 0, 0, 0)                  ' default args; gaits use default speed
         DEBUG("  -> posted CMD ", udec_(dogCmd), " to mailbox A")
     else
         DEBUG("  -> handoff withheld this pass (gate closed)")

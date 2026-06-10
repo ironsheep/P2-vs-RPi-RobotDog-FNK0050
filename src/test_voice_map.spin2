@@ -1,0 +1,134 @@
+'' =================================================================================================
+''   File....... test_voice_map.spin2
+''   Purpose.... CAPTURE the dog voice vocabulary: registers the custom-word table, then walks the word
+''               list front-to-back -- prompts each word, waits for you to say it, and records the ACTUAL
+''               CMDID that comes back (no expected/mismatch -- whatever the device reports IS the value).
+''               Each word self-skips after a wait so the pass gets through all 17. IO cog only --
+''               dog-unpowered-safe.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Wake the module (say the wake word) so it is listening, then say each prompted word. Non-command
+'  CMDIDs (the wake word, mis-hears) are reported and IGNORED -- the prompt stays until its word arrives.
+'  Run: pnut-ts -d -q test_voice_map.spin2  then  pnut-term-ts -r test_voice_map.bin -b 2000000
+'  (headless: add  --headless --end-marker "VOICE_MAP_DONE" --timeout 240)
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+
+  PIN_WS2812  = 8                                              ' committed adapter map (CLAUDE.md / wiring sec 3)
+  PIN_ECHO    = 9
+  PIN_BUZZER  = 10
+  PIN_TRIG    = 11
+  PIN_VSCL    = 18                                             ' voice bus SCL
+  PIN_VSDA    = 16                                             ' voice bus SDA
+
+  COG_STACK   = 256
+  PROBE_MS    = 600                                            ' let the IO cog run its DF2301Q probe before we read voicePresent()
+  POLL_MS     = 25                                             ' telemetry watch cadence
+  REPROMPT_MS = 6000                                           ' re-print the current prompt if nothing arrives for this long
+  GIVEUP_MS   = 30000                                          ' skip a word (record "no recognition") after this long with nothing
+  MS_DIV      = 1000                                           ' clkfreq / 1000 = ticks per millisecond
+
+OBJ
+  io     : "isp_io_controller"                                ' cog: discrete pins + 2nd I2C bus (voice)
+  names  : "isp_voice_command_names"                          ' ID -> phrase + custom-word registration
+  stack  : "isp_stack_check"                                  ' COG stack-overflow detector
+
+DAT ' ---- cog launch stack, followed IMMEDIATELY by its overflow sentinel ----
+  ioStack      LONG  0[COG_STACK]
+  ioStackMark  LONG  stack.DO_NOT_WRITE_MARK
+
+DAT ' ---- dog custom-word vocabulary (training order == CMDID 5..21; see VOICE-COMMAND-MAP.md) ----
+  dogVocab
+    byte  5, "Stand", 0
+    byte  6, "Sit", 0
+    byte  7, "Lie Down", 0
+    byte  8, "Crouch", 0
+    byte  9, "Relax", 0
+    byte 10, "Bow", 0
+    byte 11, "Forward", 0
+    byte 12, "Backward", 0
+    byte 13, "Turn Left", 0
+    byte 14, "Turn Right", 0
+    byte 15, "Halt", 0
+    byte 16, "Wave", 0
+    byte 17, "Shake", 0
+    byte 18, "Salute", 0
+    byte 19, "Push Ups", 0
+    byte 20, "Nod", 0
+    byte 21, "Parade Rest", 0
+    byte  0                                                   ' end-of-table marker
+
+PUB main() | ioCog, wordSlot, lastSeq, curSeq, actualId, status, reTick, giveUpTick
+'' Bring up the IO cog (voice), register the custom table, and CAPTURE the actual CMDID each trained
+'' word produces, walking the word list front-to-back. Records whatever comes back -- no pass/fail.
+''
+'' @local ioCog - cog id the IO controller launched into (negative on failure)
+'' @local wordSlot - the vocabulary entry being prompted (its phrase = cmdName(wordSlot))
+'' @local lastSeq - previous voice-recognition sequence (freshness edge detect)
+'' @local curSeq - voice-recognition sequence read this pass
+'' @local actualId - the CMDID actually recognized this pass
+'' @local status - registerCustomTable() result (0 = REG_OK)
+'' @local reTick - getct() deadline to re-print the current prompt
+'' @local giveUpTick - getct() deadline to skip the current word and move on
+
+    waitms(100)
+    DEBUG("=== voice command-map CAPTURE (DF2301Q) -- record the CMDID each word actually returns ===")
+
+    stack.prepStackForCheck(@ioStack, COG_STACK)
+    ioCog := cogspin(NEWCOG, io.startWithVoice(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO, PIN_VSCL, PIN_VSDA), @ioStack)
+    if ioCog < 0
+        DEBUG("FAILED to start IO cog -- aborting")
+        DEBUG("VOICE_MAP_DONE")
+        repeat
+    io.setStackCheck(@ioStack, COG_STACK)
+    waitms(PROBE_MS)
+
+    status := names.registerCustomTable(@dogVocab)
+    DEBUG("custom vocab register = ", sdec_(status), "  (0 = REG_OK)")
+
+    if not io.voicePresent()
+        DEBUG("voice present = F -- module absent/unpowered; cannot capture. Aborting.")
+        DEBUG("VOICE_MAP_DONE")
+        repeat
+
+    DEBUG("voice present = T. Wake the module, then say each prompted word in turn (front to back).")
+    DEBUG("(wake-word / unknown CMDIDs are ignored; a word self-skips after ", udec_(GIVEUP_MS / MS_DIV), "s.)")
+
+    lastSeq := io.getVoiceSeq()
+    repeat wordSlot from names.CUSTOM_FIRST to names.CUSTOM_LAST
+        DEBUG(" ")
+        DEBUG("SAY ---> '", zstr_(names.cmdName(wordSlot)), "'   (word ", udec_(wordSlot - names.CUSTOM_FIRST + 1), " of 17)")
+        reTick := getct() + (REPROMPT_MS * (clkfreq / MS_DIV))
+        giveUpTick := getct() + (GIVEUP_MS * (clkfreq / MS_DIV))
+        repeat
+            curSeq := io.getVoiceSeq()
+            if curSeq <> lastSeq
+                lastSeq := curSeq
+                actualId := io.getVoiceCmdId()
+                if actualId >= names.CUSTOM_FIRST and actualId <= names.CUSTOM_LAST
+                    DEBUG("   '", zstr_(names.cmdName(wordSlot)), "'  ->  CMDID ", udec_(actualId), "  ('", zstr_(names.cmdName(actualId)), "')")
+                    quit
+                else
+                    DEBUG("   (ignored CMDID ", udec_(actualId), " '", zstr_(names.cmdName(actualId)), "' -- wake/unknown)")
+                    reTick := getct() + (REPROMPT_MS * (clkfreq / MS_DIV))
+            elseif (getct() - giveUpTick) >= 0
+                DEBUG("   '", zstr_(names.cmdName(wordSlot)), "'  ->  (no recognition captured -- skipped)")
+                quit
+            elseif (getct() - reTick) >= 0
+                DEBUG("   ...waiting -- say '", zstr_(names.cmdName(wordSlot)), "'")
+                reTick := getct() + (REPROMPT_MS * (clkfreq / MS_DIV))
+            waitms(POLL_MS)
+
+    DEBUG(" ")
+    DEBUG("=== capture complete -- review the 'word -> CMDID' lines above for the real mapping ===")
+    DEBUG("VOICE_MAP_DONE")
+    repeat
+
+CON ' ---- License ----
+
+{{
+  MIT License -- Copyright (c) 2026 Iron Sheep Productions, LLC. See isp_voice_recognizer.spin2 for terms.
+}}
