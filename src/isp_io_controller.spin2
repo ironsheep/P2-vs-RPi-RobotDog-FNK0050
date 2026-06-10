@@ -206,6 +206,15 @@ PUB getVoiceSeq() : seq
 
     seq := voiceCmdSeq
 
+PUB voicePresent() : bPresent
+'' Return TRUE if the DF2301Q ACKed its address probe at startWithVoice() (voice bus live this build).
+'' FALSE when the build is voice-off (vScl = VOICE_OFF) or the module was absent/mis-wired at start.
+'' The probe runs once before the service loop, so this is stable after the IO cog has come up.
+''
+'' @returns bPresent - TRUE if voice recognition is active on the 2nd I2C bus
+
+    bPresent := (bVoicePresent <> 0)
+
 PUB setStackCheck(pStack, nStackLongs)
 '' (launcher) Register THIS IO cog's launch stack so serviceLoop watches it for overflow.
 '' Call AFTER cogspin (the launcher prepped the sentinel before launch).

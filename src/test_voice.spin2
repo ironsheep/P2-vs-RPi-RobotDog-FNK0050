@@ -1,0 +1,87 @@
+'' =================================================================================================
+''   File....... test_voice.spin2
+''   Purpose.... AUTO-RUN single-interface observability: DF2301Q offline voice recognizer on the 2nd
+''               I2C bus (SCL=P18, SDA=P16). Brings up ONLY the IO cog (voice enabled) and prints every
+''               recognized command-word ID + phrase. Isolated from motion -- safe with the dog
+''               unpowered/unsupported (no backend cog, no servos, no IMU).
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile -d). DEBUG @ 2 Mbaud. Runs until the end marker (headless timeout).
+'  HW: DF2301Q "Gravity" @ I2C $64 on the 2nd bus (P18 SCL / P16 SDA). The module carries its own bus
+'  pull-ups; it clock-stretches and the bus master honors that. This is the PRIMARY "do we hear commands,
+'  and which CMDIDs do we see" gate -- the IO cog publishes each recognition as latest-wins telemetry and
+'  blinks the WS2812 ring green; this top just watches the telemetry sequence and reports.
+'  Run: pnut-term-ts -r test_voice.bin -b 2000000 --headless --end-marker "TEST_DONE" --timeout 120
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+
+  ' committed adapter pin map (CLAUDE.md / P2_MIGRATION_WIRING.md §3) -- discrete pins owned by the IO cog
+  PIN_WS2812  = 8                                              ' WS2812 LED data (green recognition blink)
+  PIN_ECHO    = 9                                              ' ultrasonic ECHO (in)  -- harmless here
+  PIN_BUZZER  = 10                                             ' buzzer                -- unused here
+  PIN_TRIG    = 11                                             ' ultrasonic TRIG       -- harmless here
+  ' 2nd I2C bus -- DF2301Q voice recognizer (pin group 16; outside the committed P8-P15 block)
+  PIN_VSCL    = 18                                             ' voice bus SCL
+  PIN_VSDA    = 16                                             ' voice bus SDA
+
+  COG_STACK   = 256
+  PROBE_MS    = 600                                            ' let the IO cog run its DF2301Q probe before we read voicePresent()
+  POLL_MS     = 25                                             ' telemetry watch cadence
+
+OBJ
+  io     : "isp_io_controller"                                ' cog: discrete pins + 2nd I2C bus (voice)
+  voice  : "isp_voice_recognizer"                             ' instantiated ONLY for version() (no start here)
+  names  : "isp_voice_command_names"                          ' ID -> human-readable phrase
+  stack  : "isp_stack_check"                                  ' COG stack-overflow detector
+
+DAT ' ---- cog launch stack, followed IMMEDIATELY by its overflow sentinel ----
+  ioStack      LONG  0[COG_STACK]
+  ioStackMark  LONG  stack.DO_NOT_WRITE_MARK
+
+PUB main() | ioCog, lastSeq, curSeq, cmdId, nHeard
+'' Launch the IO cog with voice on bus 2, print a startup banner, then report each recognition.
+
+' Local Variables:
+' @local ioCog - cog id the IO controller launched into (negative on failure)
+' @local lastSeq - previous voice-recognition sequence (freshness edge detect)
+' @local curSeq - voice-recognition sequence read this pass
+' @local cmdId - latest recognized DF2301Q CMDID
+' @local nHeard - running count of recognitions reported
+
+    waitms(100)
+    DEBUG("=== voice recognizer observability (DF2301Q, bus 2: SCL=P18 SDA=P16) ===")
+
+    stack.prepStackForCheck(@ioStack, COG_STACK)
+    ioCog := cogspin(NEWCOG, io.startWithVoice(PIN_WS2812, PIN_BUZZER, PIN_TRIG, PIN_ECHO, PIN_VSCL, PIN_VSDA), @ioStack)
+    if ioCog < 0
+        DEBUG("FAILED to start IO cog -- aborting")
+        DEBUG("TEST_DONE")
+        repeat
+    io.setStackCheck(@ioStack, COG_STACK)
+
+    waitms(PROBE_MS)                                           ' the probe runs once before the IO service loop
+
+    ' startup banner -- driver version, bus pins, and the wiring-fault tell ("voice present = T/F")
+    DEBUG("IO cog alive in cog ", udec_(ioCog))
+    DEBUG("driver version = ", zstr_(voice.version()))
+    DEBUG("voice bus      = SCL P", udec_(PIN_VSCL), " / SDA P", udec_(PIN_VSDA), "  (DF2301Q @ I2C $64)")
+    if io.voicePresent()
+        DEBUG("voice present  = T  -- speak a built-in word; each recognition prints below")
+    else
+        DEBUG("voice present  = F  -- module absent/mis-wired; loop idles (check P18/P16 + power)")
+
+    DEBUG("LISTENING -- idle until a command is spoken; run ends on harness timeout")
+
+    lastSeq := io.getVoiceSeq()
+    nHeard := 0
+    repeat
+        curSeq := io.getVoiceSeq()
+        if curSeq <> lastSeq                                  ' a fresh recognition was published
+            lastSeq := curSeq
+            cmdId := io.getVoiceCmdId()
+            nHeard++
+            DEBUG("heard #", udec_(nHeard), ": CMDID ", udec_(cmdId), "  '", zstr_(names.cmdName(cmdId)), "'")
+        waitms(POLL_MS)
