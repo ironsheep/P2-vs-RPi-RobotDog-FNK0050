@@ -10,6 +10,21 @@ on hardware · `[x]` done.
 
 ## Active
 
+### [ ] Lower LIE_DOWN needs front-leg re-trim — *deferred; cal task, not a CON tweak*
+
+**What:** the lie-down rest currently ships at `LIEDOWN_HEIGHT_MM=50` (low + level, paws flat,
+verified on the bench 2026-06-09). It cannot go meaningfully lower with these calibrations: two
+front joints carry large cal trims — **FL coxa ≈ −16°** and **FR femur ≈ −14°** — that box in the
+low-pose envelope. At `Y=50` the right-front leg already rides at its fully-folded drivable limit
+(the host gate `test_keystone_geometry` reports this as an **advisory WARN**, not a FAIL, by design).
+
+**Why it would pay off:** a genuinely belly-down lie-down (body near the floor) would read more
+"lying down." It needs the FL-coxa and FR-femur leg trims re-measured/re-trimmed (cal tool) to buy
+clamp headroom — a bench calibration task, out of scope for the keystone sprint.
+
+**Where:** `isp_calibration` leg trims (FL coxa, FR femur), then lower `LIEDOWN_HEIGHT_MM` and re-run
+the host gate. *Noticed 2026-06-09, DOG-LIKE-MOTION-01 keystone §7 closeout.*
+
 ### [ ] Gamma correction for the LED ring — *deferred; perceptual only, no current win*
 
 **What:** optional gamma (perceptual-brightness) correction of RGB channel values before transmit.

@@ -25,6 +25,8 @@ looked wrong.
 - **Shake** still offers its paw from a seated position, and settles back level when done.
 - **Lie down.** Reworked into a clean **low, flat rest** — the dog sits low and level with its paws
   flat on the ground (the earlier version tilted nose-up and lifted the front paws off the floor).
+  Bench-verified level. A noticeably *lower* (belly-down) lie-down is limited by one front leg's
+  calibration and is parked for a future leg re-trim.
 - **Walking.** Each leg keeps its own foot height while walking, so the rear stays lower than the front
   through the whole gait instead of flattening out mid-stride. All six gaits and the speed control run
   smoothly and ease cleanly to a stop.
@@ -42,10 +44,8 @@ looked wrong.
 
 **Known / not yet verified**
 
-- The new low **lie-down** is proven safe and was checked in the geometry self-test, but its final
-  on-robot look is a quick visual confirm on the next flash.
-- A noticeably *lower* lie-down (belly near the floor) is limited by one leg's calibration and would
-  need that leg re-trimmed — a separate bench task.
+- A noticeably *lower* lie-down (belly near the floor) is limited by one front leg's calibration and
+  would need that leg re-trimmed — parked as a separate bench task.
 
 ---
 
