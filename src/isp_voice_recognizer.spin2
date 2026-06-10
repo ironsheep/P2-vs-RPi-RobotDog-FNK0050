@@ -12,7 +12,7 @@
 ''   Started.... 03 Jun 2026
 ''   Updated.... 07 Jun 2026
 ''
-''   Rests on... isp_i2c_singleton (bit-banged I2C bus, shared singleton)
+''   Rests on... isp_i2c (bit-banged I2C bus, VAR/instance — clock-stretch capable, owns 2nd bus)
 ''   See........ DOCs/design/DRIVER-THEORY-OF-OPERATIONS.md (how this driver works)
 ''               DOCs/reference/THEORY-OF-OPERATIONS.md   (device protocol / reference library)
 ''
@@ -234,7 +234,7 @@ CON ' ---- Channel-Based DEBUG (Spin2 v46+) ----
 
 OBJ ' ---- Object References ----
 
-  i2c : "isp_i2c_singleton"                                     ' shared bit-banged I2C bus
+  i2c : "isp_i2c"                                               ' VAR/instance bit-banged I2C bus (clock-stretch capable, bus 2)
 
 
 VAR ' per-instance state
