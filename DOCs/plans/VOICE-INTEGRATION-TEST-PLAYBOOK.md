@@ -16,8 +16,8 @@ Each exercise is tagged so you know what it's for:
 - **[NEW]** — verify new voice behavior shipped this sprint (recognition, telemetry, dispatch/gating).
 - **[CERT]** — certify a previously-trusted subsystem still works now that cog 2 owns a 2nd bus and
   cog 0 is a dispatch loop (bus-1 motion/IMU/battery, ranging, LED).
-- **[ELEC]** — confirm the bus-2 electrical setup (module supply rail; pull-up already settled at
-  `PU_1K5` from the working-driver precedent, wiring §3a).
+- **[ELEC]** — bus-2 electrical is already **resolved** (pull-up `PU_1K5`; supply 3.3 V metered) —
+  Exercise 1 is record-only, wiring §3a.
 
 > Record pass/fail on each exercise — `sprint-closeout` reads these. A failed exercise is a finding:
 > fix it before closeout, or (exception) carry it to `DOCs/plans/PUNCH-LIST.md`. If a run surfaces
@@ -46,7 +46,7 @@ Each exercise is tagged so you know what it's for:
 | Exercise | Driver | Build | End-marker | Timeout | Robot? |
 |----------|--------|-------|------------|---------|--------|
 | 0 Automated gate | compile sweep (`BUILD_COMMAND`) | — | — | — | no (host) |
-| 1 Bus-2 electrical pre-flight | (multimeter; `test_voice` loaded) | `test_voice` | — | — | no (dog unpowered) |
+| 1 Bus-2 electrical | RESOLVED — record-only (pull-up `PU_1K5`, supply 3.3 V) | — | — | — | no |
 | 2 Bus-2 recognition | `test_voice.spin2` | `test_voice` | *(none — runs to timeout)* | 120 | no (dog unpowered/safe) |
 | 3 Bus coexistence | `robot_dog_top.spin2` (clean) | `robot_dog_top` | *(none — dispatch loop)* | 90 | yes |
 | 4 Absent-module degradation | `robot_dog_top.spin2` (clean) | `robot_dog_top` | *(none — dispatch loop)* | 60 | yes |
@@ -82,32 +82,22 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
 
 ---
 
-## Exercise 1 — Bus-2 electrical pre-flight: supply rail (pull-up already settled) [ELEC] [NEW]
+## Exercise 1 — Bus-2 electrical: RESOLVED (no action) [ELEC]
 
-- **Verifies:** wiring §3a — the bus-2 electrical setup is safe before trusting recognition. **The
-  pull-up is already resolved:** `VOICE_I2C_PULLUP = PU_1K5`, matching the **bench-proven working
-  driver** on this hardware (vendor quick-start + `custom_words_example` both call `i2c.PU_1K5`). So
-  this exercise just confirms the **module supply rail** and the logic-level that follows.
-- **Targets:** 1 bench unit, **dog unpowered** (Load OFF — voice needs only the module + P2), multimeter.
-- **Setup:** P2 powered, DF2301Q wired on P18 (SCL) / P16 (SDA) and powered from its supply rail.
-  Flash `test_voice` (Exercise 2's build) so the P2 configures the bus-2 pins (`PU_1K5`), then leave it
-  idling at the `LISTENING` banner.
-- **Action / OBSERVE (multimeter, DC):**
-  1. **Supply rail** — measure the DF2301Q VCC pin: **3.3 V or 5 V?** Record it. If **5 V**, its
-     SDA/SCL idle high will exceed 3.3 V → the P2 needs a clamp/level-shift on those lines (wiring §4
-     voice row) before relying on the bus; prefer running the module at **3.3 V**.
-  2. **Sanity (optional)** — with the bus idle, SDA (P16) / SCL (P18) should idle **high** (≈ rail);
-     the P2's `PU_1K5` holds them up. If they sit low, check wiring/GND before Exercise 2.
-- **PASS TELL:** supply rail recorded = ____ V; if 5 V, clamp/level-shift fitted; SDA/SCL idle high.
-- **Feeds closeout:** confirm/record the supply-rail value in wiring §3a (the last open bus-2 item).
-- **Pass/fail:** `[ ]`  rail ____ V · clamp fitted if 5 V? ______ · SDA/SCL idle high? ______
+> **Both bus-2 electrical items are closed — no bench action required.**
+> - **Pull-up:** `VOICE_I2C_PULLUP = PU_1K5`, matching the bench-proven working driver (vendor
+>   quick-start + `custom_words_example` both call `i2c.PU_1K5`; `PU_3K3` idled the bus low).
+> - **Supply rail:** **3.3 V** (metered 2026-06-10) → SDA/SCL idle ≈ 3.3 V, within the P2's range,
+>   **no clamp/level-shift needed.**
+>
+> Kept here for the record; wiring §3a is the authoritative source. Proceed to Exercise 2.
 
 ---
 
 ## Exercise 2 — Bus-2 recognition: "do we hear commands, and which CMDIDs?" [NEW]
 
 - **Verifies:** §4 `«#23»` (the primary observability gate) + §5 `«#22»` (green blink). **The headline
-  exercise of the sprint.** Depends on Ex 0 green and a confirmed supply rail (Ex 1).
+  exercise of the sprint.** Depends on Ex 0 green (bus-2 electrical already resolved, Ex 1).
 - **Targets:** 1 bench unit, **dog unpowered / unsupported is fine** — only the IO cog runs; no
   servos, no IMU, no backend. Safe to run on the desk.
 - **Driver:** `test_voice.spin2` (timeout 120, no end-marker — speak during the window).
@@ -222,7 +212,7 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
 ## Closeout inputs
 
 - **Per-exercise pass/fail** above → `sprint-closeout` verification state.
-- **Ex 1 supply-rail result** → record the 3.3-vs-5 V finding in wiring §3a (the last open bus-2
-  electrical item; the pull-up is already settled at `PU_1K5`).
+- **Bus-2 electrical** → fully resolved (pull-up `PU_1K5`; supply 3.3 V metered 2026-06-10),
+  recorded in wiring §3a. No open electrical items.
 - **Ex 5 revert confirmation** → the throwaway mapping must be gone (Ex 0 green) before the sprint closes.
 - Any failure not fixed in-sprint → new active item in `DOCs/plans/PUNCH-LIST.md`.

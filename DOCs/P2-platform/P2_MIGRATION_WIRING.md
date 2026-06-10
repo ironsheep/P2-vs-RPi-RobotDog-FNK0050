@@ -212,14 +212,13 @@ reply); the bus master (`isp_i2c`, the VAR/instance variant) honors the stretch 
 
 | Item | Status | Note |
 |---|---|---|
-| Module supply | **inferred** | DF2301Q Gravity board runs at 3.3–5 V; powered from the adapter rail (confirm 3.3 vs 5 V at bench — see checklist §6). |
+| Module supply | **✅ metered 2026-06-10 — 3.3 V** | DF2301Q powered at **3.3 V** from the adapter rail. |
 | SDA/SCL pull-ups | **✅ resolved (working-driver precedent)** | The **bench-proven** driver on this hardware drives the **P2's strong internal pull-up, `PU_1K5`** — both the vendor quick-start (`VoiceSensor/USER-GUIDE.md`) and `custom_words_example` call `start(..., i2c.PU_1K5)`. Firmware matches: `isp_io_controller.VOICE_I2C_PULLUP = 1` (`PU_1K5`). The weaker `PU_3K3` can idle the bus low; `PU_NONE` would only suit a board with adequate external pull-ups (not what worked here). |
-| Logic level | **inferred** | If the module is run at 5 V, its SDA/SCL idle high must be clamped/level-shifted to ≤ 3.3 V for the P2 — verify before relying on it (the bus-1 hazards in §4 apply equally). |
+| Logic level | **✅ no hazard** | At 3.3 V the SDA/SCL idle high is ≈ 3.3 V — within the P2's range; **no clamp/level-shift needed** (unlike bus 1's 5 V ECHO). |
 
-> **Pull-up — resolved.** `VOICE_I2C_PULLUP = PU_1K5`, matching the working voice driver on this
-> hardware (same pattern as bus 1, which also drives `PU_1K5` over a board pull-down). The only
-> bus-2 item still worth a bench check is the **module supply rail (3.3 vs 5 V)** and the logic-level
-> clamp that follows from it (§6 checklist).
+> **Bus 2 — fully resolved.** Supply **3.3 V** (metered 2026-06-10), pull-up `VOICE_I2C_PULLUP =
+> PU_1K5` (matching the working voice driver — same pattern as bus 1's `PU_1K5`), and at 3.3 V the
+> bus is within the P2's range so no level-shifting is required. No open bus-2 electrical items.
 
 **P2 Edge reserved pins — don't use for robot I/O:** the Edge module uses **P58–P61** for
 the boot SPI flash and **P62/P63** for the serial/programming host. The **P8–P15** block
@@ -238,7 +237,7 @@ robot's 5 V and tap to re-supply header pins 1/17.
 | **Ultrasonic TRIG** | P2→sensor | P2 drives 3.3 V; HC-SR04 trigger threshold usually OK | Safe; if flaky, level-shift up to 5 V |
 | **Buzzer** | P2→board | Driving a transistor/driver from 3.3 V | Safe (output) |
 | **WS2812 data** | P2→strip | 3.3 V data into a 5 V strip (data-high threshold ≈ 0.7·Vcc) | The Pi did this at 3.3 V already; usually works. If the first pixel is unreliable, add a 3.3→5 V level shifter (74AHCT125) or power the strip at ~4.3 V |
-| **Voice SDA/SCL** (bus 2, P16/P18) | bidir | DF2301Q I²C; risk depends on module supply (3.3 V → safe; 5 V → SDA/SCL idle high exceeds 3.3 V) | **Run the module at 3.3 V if possible** (no hazard). If at 5 V, clamp/level-shift SDA & SCL to ≤ 3.3 V at the P2 (same rule as bus 1). Pull-up: **`PU_1K5`** (P2 internal), per §3a — matches the working driver. |
+| **Voice SDA/SCL** (bus 2, P16/P18) | bidir | DF2301Q I²C at **3.3 V** (metered 2026-06-10) → idle high ≈ 3.3 V, **no hazard** | **No clamp/level-shift needed.** Pull-up: **`PU_1K5`** (P2 internal), per §3a — matches the working driver. |
 
 P2 pins have **configurable drive strength / pull-ups / pull-downs** (P_HIGH_FLOAT / 1K5 /
 15K / ~1 mA modes via the WRPIN M-field); set adequate drive for TRIG, buzzer, and the LED
@@ -295,8 +294,8 @@ Most of the robot is on **I²C**, so porting is mostly "implement an I²C master
 - [ ] Keep robot signals on **P0–P57**; leave **P58–P63** for flash/serial.
 - [x] **Voice 2nd bus pull-up** — `VOICE_I2C_PULLUP = PU_1K5`, matching the bench-proven working driver
       (vendor quick-start + `custom_words_example` both use `i2c.PU_1K5`); §3a. **Resolved.**
-- [ ] **Voice module supply rail** — confirm the DF2301Q runs at **3.3 vs 5 V**; if 5 V, clamp/level-shift
-      SDA/SCL (P18/P16) to ≤ 3.3 V at the P2 (§4 voice row). The only bus-2 electrical item left open.
+- [x] **Voice module supply rail** — **metered 2026-06-10: 3.3 V** → idle high ≈ 3.3 V, **no clamp
+      needed** (§3a, §4 voice row). All bus-2 electrical items closed.
 
 ---
 

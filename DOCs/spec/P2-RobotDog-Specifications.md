@@ -261,10 +261,10 @@ green LED blink** on each recognition this sprint. The **intended full LED feedb
 target for the mapping sprint) is: **spinning green = acting on a recognized command**, **red =
 recognized but refused** (e.g. gated/halted), **off = idle/listening**.
 
-**Electrical.** The bus-2 pull-up is **resolved**: `VOICE_I2C_PULLUP = PU_1K5` (P2 internal strong
-pull-up), matching the bench-proven working driver on this hardware (vendor quick-start +
-`custom_words_example` both call `start(..., i2c.PU_1K5)`) — see wiring §3a. The only bus-2 item still
-worth a bench check is the **module supply rail (3.3 vs 5 V)** and the logic-level clamp that follows.
+**Electrical (resolved).** `VOICE_I2C_PULLUP = PU_1K5` (P2 internal strong pull-up), matching the
+bench-proven working driver on this hardware (vendor quick-start + `custom_words_example` both call
+`start(..., i2c.PU_1K5)`). The module is supplied at **3.3 V** (metered 2026-06-10), so the bus idles
+within the P2's range — **no clamp/level-shift needed.** No open bus-2 electrical items. See wiring §3a.
 
 ---
 
