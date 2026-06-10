@@ -164,8 +164,20 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
     this sprint.
 - **PASS TELL:** the dog **inits/cal/stands normally AND voice recognitions log concurrently**, with
   no servo disturbance and **no motion triggered** by speech.
-- **Pass/fail:** `[ ]`  normal stand? ___ · voice logs while standing? ___ · no servo glitch / no
-  motion on speech? ___
+- **Bench result 2026-06-10** (`src/logs/debug_260610-120703.log`):
+  - 3-cog runtime up (IO cog1, backend cog2); gyro cal succeeded after 6 motion-retries (expected
+    while hand-supported), `bias x=239 y=-248 z=-23`; **initial STAND reached** — all feet
+    `tgt(55,78,±10)=cur`, `mode=3`, `tilt p=-1 r=0` (level); `battery 7704 mV`. **`voice present = T`**
+    on bus 2 *with the full bus-1 backend live* — coexistence proven.
+  - Three recognitions during the stand, phrases correct (fix holds in the full build): CMDID **2**
+    `Hello Robot`, **22** `Go Forward`, **23** `Retreat`. Each traced
+    `gate: … moveDone=1 busy=0 halted=0 -> HANDOFF` then `no behavior mapped (CMD_NONE); nothing posted`
+    — **no motion on speech**. **PASS.**
+  - Minor notes (non-blocking): (a) banner labels cogs `cog1 backend | cog2 IO`, but runtime launched
+    **IO=cog1 / backend=cog2** — cosmetic label vs dynamic cog assignment → punch-list nit;
+    (b) ranging idle (`dist=-1 mm pingSeq=0`) — out of Ex 3 scope, confirm separately.
+- **Pass/fail:** `[x]`  normal stand? **YES** · voice logs while standing? **YES (2/22/23)** · no servo
+  glitch / no motion on speech? **YES (CMD_NONE, nothing posted)** · *(visual: green-alive/chirp = eyeball)*
 
 ---
 
@@ -183,7 +195,26 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
     voice lines — `getVoiceSeq()` never advances) and **never hangs**.
 - **PASS TELL:** `voice present = F`, normal stand, dispatch loop idles cleanly for the whole window —
   **no freeze, no servo fault.**
-- **Pass/fail:** `[ ]`  present=F? ___ · normal stand? ___ · no hang, quiet idle? ___
+- **Bench result 2026-06-10** — two disconnect cases run:
+  - **All voice pins disconnected** (`src/logs/debug_260610-121854.log`): **`voice present = F`** —
+    correct. Normal 3-cog boot, gyro cal (`bias x=243 y=-248 z=-28`), **STAND reached** (`tilt p=-1 r=0`,
+    `battery 7704 mV`), dispatch loop idle, clean session end — **no hang.** **PASS.**
+  - **3.3 V supply removed but SDA/SCL + GND still wired** (`src/logs/debug_260610-121417.log`):
+    **`voice present = T` — FALSE POSITIVE.** The probe is `i2c.present(DEV_WR)`, an address-ACK only
+    (`isp_voice_recognizer.spin2:278`). With the `PU_1K5` pull-ups + GND connected, the unpowered
+    DF2301Q is **parasitically powered through its I/O clamp diodes** and still ACKs `$64`. So
+    **`present = T` means "something ACKs at `$64`", NOT "the module is powered + functional."**
+- **FINDING → probe hardening: IMPLEMENTED.** `start()` now follows the address-ACK with a **liveness
+  check** — `probeLive()` writes two distinct values to `REG_WAKE_TIME ($06)` and requires each to read
+  back exactly (original restored). A phantom-powered chip ACKs but cannot store+return register data.
+  - **Bench-confirmed 2026-06-10 — both directions, finding CLOSED:**
+    - 3.3 V lifted / phantom-powered (`src/logs/debug_260610-124713.log`): the state that previously read
+      `T` now reads **`voice present = F`** — false positive eliminated.
+    - 3.3 V reconnected / powered (`src/logs/debug_260610-124838.log`): **`voice present = T`**, and
+      recognition unaffected (CMDID 2/22/23 correct) — the liveness check is not over-strict and the
+      `REG_WAKE_TIME` round-trip + restore does not disturb operation. **PASS.**
+- **Pass/fail:** `[x]`  present=F (all pins off)? **YES** · normal stand? **YES** · no hang, quiet idle?
+  **YES** · *(note: power-only-off gives a false present=T — probe-hardening finding above)*
 
 ---
 
@@ -234,4 +265,14 @@ pnut-term-ts -r src/<driver>.bin -b 2000000 --headless --timeout <N>
 - **Bus-2 electrical** → fully resolved (pull-up `PU_1K5`; supply 3.3 V metered 2026-06-10),
   recorded in wiring §3a. No open electrical items.
 - **Ex 5 revert confirmation** → the throwaway mapping must be gone (Ex 0 green) before the sprint closes.
+- **Open findings → `DOCs/plans/PUNCH-LIST.md`:**
+  - **Voice probe hardening** (Ex 4) — DONE + fully bench-verified both directions: address-ACK +
+    `REG_WAKE_TIME` write/read-back liveness check. Phantom (3.3 V-lifted) → `F`, powered → `T` with
+    recognition intact. No longer an open finding.
+  - **Green-blink stuck-on** (Ex 2) — RESOLVED by the new LED engine (`isp_led_engine`: single owner of
+    the ring; cues are single-shot overlays that revert to the base). Bench-verified 2026-06-10 via
+    `test_led_engine` (`src/logs/debug_260610-124917.log`): 4 recognition-style green cues each flash and
+    revert to OFF — no stuck-on. (Also added a slower, readable chase/wipe pace and a `RAINBOW_BREATHE`
+    mode.) The live voice cue now routes through `led.blink()` on the same engine path.
+  - **Cog-label banner nit** (Ex 3) — fixed in `robot_dog_top` (now `cog1 IO | cog2 backend`).
 - Any failure not fixed in-sprint → new active item in `DOCs/plans/PUNCH-LIST.md`.

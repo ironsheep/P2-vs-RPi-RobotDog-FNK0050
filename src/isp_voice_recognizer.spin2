@@ -208,6 +208,15 @@ CON ' ---- Driver Configuration ----
   ' Change this to set the power-on volume your application wants.
   DEF_VOLUME      = 7                                           ' volume applied at start() (documented range 1-7)
 
+  ' start()-probe LIVENESS check: an address ACK alone is not proof the module is powered -- with the bus
+  ' pull-ups + GND connected, an UNPOWERED DF2301Q is parasitically powered through its I/O clamp diodes
+  ' and still ACKs $64 (bench-confirmed 2026-06-10). So after the ACK we write two distinct known values
+  ' to REG_WAKE_TIME and require each to read back EXACTLY: a phantom-powered chip cannot store+return
+  ' register data. Two distinct values defeat a stuck/floating line that happens to match one. The
+  ' original wake-time is restored afterward.
+  PROBE_WAKE_A    = $5A                                         ' first liveness round-trip value (90 s)
+  PROBE_WAKE_B    = $25                                         ' second liveness round-trip value (37 s)
+
 
 CON ' ---- Status / Error Codes ----
 
@@ -270,14 +279,17 @@ PUB start(scl, sda, khz, pullup) : bFound
 '' @param sda - I2C data pin
 '' @param khz - bus speed in kHz (100 standard / 400 / 1000)
 '' @param pullup - internal pull-up: i2c.PU_NONE / PU_1K5 / PU_3K3 / PU_15K
-'' @returns bFound - TRUE if the device acknowledges its address, FALSE if absent
+'' @returns bFound - TRUE if the device ACKs AND passes a register write/read-back liveness check
+''                   (powered + functional); FALSE if absent or only parasitically powered
 
   sclPin := scl
   sdaPin := sda
   i2c.setup(scl, sda, khz, pullup)
-  bFound := i2c.present(DEV_WR)                                 ' start + write(addr); ACK == present
+  bFound := i2c.present(DEV_WR)                                 ' cheap pre-check: address ACK (start + write addr)
   i2c.stop()                                                   ' finish the probe transaction
   waitms(5)                                                    ' let the bus settle to its idle level
+  if bFound                                                    ' ACK alone can be a parasitically-powered chip --
+    bFound := probeLive()                                      '   require a register write/read-back to prove it is live
   debug[DBG_VOICE]("voice: start present=", udec_(bFound))
   ' bring-up aid: idle bus levels -- both should read 1 (released to pull-ups); a 0 = stuck line
   debug[DBG_VOICE]("voice: idle scl=", udec_(pinread(sclPin)), " sda=", udec_(pinread(sdaPin)))
@@ -490,6 +502,30 @@ PRI readReg(regAddr) : byteVal
   i2c.write(DEV_RD)
   byteVal := i2c.read(i2c.NAK)                                 ' one byte, NAK on last
   i2c.stop()
+
+
+PRI probeLive() : bLive | savedWake
+' Liveness probe: confirm the device is powered + functional, not merely ACKing its address while
+' parasitically powered through the bus pull-ups. Writes two distinct known values to REG_WAKE_TIME and
+' requires each to read back exactly; a phantom-powered chip ACKs but cannot store+return register data.
+' The original wake-time is read first and restored before returning (harmless if the device is dead).
+'
+' @returns bLive - TRUE only if BOTH write/read-back round-trips matched
+
+' Local Variables:
+' @local savedWake - the device's wake-time setting before the probe, restored afterward
+
+  savedWake := readReg(REG_WAKE_TIME)
+  bLive := regRoundTrips(PROBE_WAKE_A) and regRoundTrips(PROBE_WAKE_B)
+  writeReg(REG_WAKE_TIME, savedWake)                           ' restore the original setting
+
+PRI regRoundTrips(testVal) : bMatch
+' Write testVal to REG_WAKE_TIME and report whether it ACKs and reads back identically.
+'
+' @param testVal - byte value to write then read back
+' @returns bMatch - TRUE if the write ACKed (E_OK) and the read-back equals testVal
+
+  bMatch := (writeReg(REG_WAKE_TIME, testVal) == E_OK) and (readReg(REG_WAKE_TIME) == testVal)
 
 
 CON ' ---- License ----
