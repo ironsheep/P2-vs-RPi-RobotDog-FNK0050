@@ -59,10 +59,12 @@ CON ' ---- voice recognizer (DF2301Q on the 2nd I2C bus) ----
   ' Optional: enabled only when startWithVoice() receives real bus pins (vScl <> VOICE_OFF).
   VOICE_OFF        = -1             ' vScl/vSda sentinel: "no voice bus on this build"
   VOICE_I2C_KHZ    = 100            ' DF2301Q standard bus speed (its quick-start default)
-  VOICE_I2C_PULLUP = 0              ' = isp_i2c PU_NONE (DF2301Q Gravity board carries its own SDA/SCL
-                                    '   pull-ups -- vendor USER-GUIDE). Pending the §3a bench meter: if the
-                                    '   board does NOT self-pull, switch to PU_1K5 (=1) -- the weaker PU_3K3
-                                    '   can idle the bus low (USER-GUIDE). See wiring §3a / §6 checklist.
+  VOICE_I2C_PULLUP = 1              ' = isp_i2c PU_1K5 (strong internal pull-up). Matches the BENCH-PROVEN
+                                    '   working driver on THIS hardware: the vendor quick-start
+                                    '   (VoiceSensor/USER-GUIDE.md) and custom_words_example both call
+                                    '   start(..., i2c.PU_1K5). The weaker PU_3K3 can idle the bus low. See
+                                    '   wiring §3a. (PU_NONE would only suit a board with adequate external
+                                    '   pull-ups -- not what worked here.)
   VOICE_BLINK_MS   = 120           ' green "I heard something" blink duration (non-blocking)
   VOICE_BLINK_RGB  = $00_FF_00     ' green; minimal recognition cue (full LED scheme is a later sprint)
 
