@@ -142,8 +142,7 @@ PUB startWithVoice(ledPin, buzzerPin, trigPin, echoPin, vScl, vSda)
     buzzer.start(buzzerPin)
     sonic.startSmart(trigPin, echoPin)                        ' non-blocking smart-pin ranging
 
-    bVoicePresent := FALSE
-    if vScl <> VOICE_OFF
+    if vScl <> VOICE_OFF                                      ' bVoicePresent defaults FALSE (DAT), like ledActive/buzzing
         bVoicePresent := voice.start(vScl, vSda, VOICE_I2C_KHZ, VOICE_I2C_PULLUP)  ' this cog owns the 2nd bus
 
     nextLedTick := getct()
