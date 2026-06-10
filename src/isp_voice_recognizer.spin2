@@ -1,0 +1,521 @@
+{Spin2_v46}                                                    ' enables channel-based DEBUG[n]() / DEBUG_MASK
+'' =================================================================================================
+''
+''   File....... isp_voice_recognizer.spin2
+''   Purpose.... P2 driver for the DFRobot DF2301Q "Gravity" offline voice-recognition sensor
+''               (SKU SEN0539) over I2C.  Hands the application the recognized command ID (CMDID),
+''               plays reply audio, and configures volume / mute / wake-duration.
+''   Author..... Stephen M Moraco
+''               Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see end of file for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... 03 Jun 2026
+''   Updated.... 07 Jun 2026
+''
+''   Rests on... isp_i2c_singleton (bit-banged I2C bus, shared singleton)
+''   See........ DOCs/design/DRIVER-THEORY-OF-OPERATIONS.md (how this driver works)
+''               DOCs/reference/THEORY-OF-OPERATIONS.md   (device protocol / reference library)
+''
+'' =================================================================================================
+
+
+CON ' ---- Public Command-Word IDs ----
+
+  {Spin2_Doc_CON}
+  ' Command-word IDs reported by getCMDID()/pollCMDID().  0 means "nothing recognized."  These are the
+  ' DF2301Q's built-in fixed vocabulary (ported from the DFRobot reference DFRobot_DF2301Q_Commands.py);
+  ' the human phrase for an ID is available from the optional isp_voice_command_names object (cmdName()).
+  ' Constants cost nothing unless referenced.  VALIDATE against the product's printed command-word
+  ' card on hardware (#9) -- firmware revisions have reshuffled lists.
+
+  ' sentinel & wake words
+  CMD_NONE                          = 0    ' Silence / nothing recognized
+  CMD_WAKE_LEARN                    = 1    ' WakeUpWordsForLearning
+  CMD_HELLO_ROBOT                   = 2    ' HelloRobot (default wake word)
+  ' NOTE: which CMDID enterWakeState() plays to wake the module is resolved on hardware
+  '       (reference finding F1) -- see DOCs/plans sec 9 / task #9.
+
+  ' custom slots (user-trained; the spoken phrase is whatever you record)
+  CMD_CUSTOM_1                      = 5
+  CMD_CUSTOM_2                      = 6
+  CMD_CUSTOM_3                      = 7
+  CMD_CUSTOM_4                      = 8
+  CMD_CUSTOM_5                      = 9
+  CMD_CUSTOM_6                      = 10
+  CMD_CUSTOM_7                      = 11
+  CMD_CUSTOM_8                      = 12
+  CMD_CUSTOM_9                      = 13
+  CMD_CUSTOM_10                     = 14
+  CMD_CUSTOM_11                     = 15
+  CMD_CUSTOM_12                     = 16
+  CMD_CUSTOM_13                     = 17
+  CMD_CUSTOM_14                     = 18
+  CMD_CUSTOM_15                     = 19
+  CMD_CUSTOM_16                     = 20
+  CMD_CUSTOM_17                     = 21
+
+  ' built-in fixed commands (note: 28 is skipped in the reference list)
+  CMD_GO_FORWARD                    = 22
+  CMD_RETREAT                       = 23
+  CMD_PARK_A_CAR                    = 24
+  CMD_TURN_LEFT_90_DEG              = 25   ' TurnLeftNinetyDegrees
+  CMD_TURN_LEFT_45_DEG              = 26   ' TurnLeftFortyFiveDegrees
+  CMD_TURN_LEFT_30_DEG              = 27   ' TurnLeftThirtyDegrees
+  CMD_TURN_RIGHT_45_DEG             = 29   ' TurnRightFortyFiveDegrees
+  CMD_TURN_RIGHT_30_DEG             = 30   ' TurnRightThirtyDegrees
+  CMD_SHIFT_DOWN_A_GEAR             = 31
+  CMD_LINE_TRACKING_MODE            = 32
+  CMD_LIGHT_TRACKING_MODE           = 33
+  CMD_BLUETOOTH_MODE                = 34
+  CMD_OBSTACLE_AVOIDANCE_MODE       = 35
+  CMD_FACE_RECOGNITION              = 36
+  CMD_OBJECT_TRACKING               = 37
+  CMD_OBJECT_RECOGNITION            = 38
+  CMD_LINE_TRACKING                 = 39
+  CMD_COLOR_RECOGNITION             = 40
+  CMD_TAG_RECOGNITION               = 41
+  CMD_OBJECT_SORTING                = 42
+  CMD_QR_CODE_RECOGNITION           = 43
+  CMD_GENERAL_SETTINGS              = 44
+  CMD_CLEAR_SCREEN                  = 45
+  CMD_LEARN_ONCE                    = 46
+  CMD_FORGET                        = 47
+  CMD_LOAD_MODEL                    = 48
+  CMD_SAVE_MODEL                    = 49
+  CMD_TAKE_PHOTOS_AND_SAVE_THEM     = 50
+  CMD_SAVE_AND_RETURN               = 51
+  CMD_DISPLAY_NUMBER_ZERO           = 52
+  CMD_DISPLAY_NUMBER_ONE            = 53
+  CMD_DISPLAY_NUMBER_TWO            = 54
+  CMD_DISPLAY_NUMBER_THREE          = 55
+  CMD_DISPLAY_NUMBER_FOUR           = 56
+  CMD_DISPLAY_NUMBER_FIVE           = 57
+  CMD_DISPLAY_NUMBER_SIX            = 58
+  CMD_DISPLAY_NUMBER_SEVEN          = 59
+  CMD_DISPLAY_NUMBER_EIGHT          = 60
+  CMD_DISPLAY_NUMBER_NINE           = 61
+  CMD_DISPLAY_SMILEY_FACE           = 62
+  CMD_DISPLAY_CRYING_FACE           = 63
+  CMD_DISPLAY_HEART                 = 64
+  CMD_TURN_OFF_DOT_MATRIX           = 65
+  CMD_READ_CURRENT_POSTURE          = 66
+  CMD_READ_AMBIENT_LIGHT            = 67
+  CMD_READ_COMPASS                  = 68
+  CMD_READ_TEMPERATURE              = 69
+  CMD_READ_ACCELERATION             = 70
+  CMD_READING_SOUND_INTENSITY       = 71
+  CMD_CALIBRATE_ELECTRONIC_GYRO     = 72   ' CalibrateElectronicGyroscope
+  CMD_TURN_ON_THE_CAMERA            = 73
+  CMD_TURN_OFF_THE_CAMERA           = 74
+  CMD_TURN_ON_THE_FAN               = 75
+  CMD_TURN_OFF_THE_FAN              = 76
+  CMD_FAN_SPEED_GEAR_ONE            = 77   ' TurnFanSpeedToGearOne
+  CMD_FAN_SPEED_GEAR_TWO            = 78   ' TurnFanSpeedToGearTwo
+  CMD_FAN_SPEED_GEAR_THREE          = 79   ' TurnFanSpeedToGearThree
+  CMD_START_OSCILLATING             = 80
+  CMD_STOP_OSCILLATING              = 81
+  CMD_RESET                         = 82
+  CMD_SET_SERVO_10_DEG              = 83   ' SetServoToTenDegrees
+  CMD_SET_SERVO_30_DEG              = 84   ' SetServoToThirtyDegrees
+  CMD_SET_SERVO_45_DEG              = 85   ' SetServoToFortyFiveDegrees
+  CMD_SET_SERVO_60_DEG              = 86   ' SetServoToSixtyDegrees
+  CMD_SET_SERVO_90_DEG              = 87   ' SetServoToNinetyDegrees
+  CMD_TURN_ON_THE_BUZZER            = 88
+  CMD_TURN_OFF_THE_BUZZER           = 89
+  CMD_TURN_ON_THE_SPEAKER           = 90
+  CMD_TURN_OFF_THE_SPEAKER          = 91
+  CMD_PLAY_MUSIC                    = 92
+  CMD_STOP_PLAYING                  = 93
+  CMD_THE_LAST_TRACK                = 94
+  CMD_THE_NEXT_TRACK                = 95
+  CMD_REPEAT_THIS_TRACK             = 96
+  CMD_VOLUME_UP                     = 97
+  CMD_VOLUME_DOWN                   = 98
+  CMD_CHANGE_VOLUME_TO_MAXIMUM      = 99
+  CMD_CHANGE_VOLUME_TO_MINIMUM      = 100
+  CMD_CHANGE_VOLUME_TO_MEDIUM       = 101
+  CMD_PLAY_POEM                     = 102
+  CMD_TURN_ON_THE_LIGHT             = 103
+  CMD_TURN_OFF_THE_LIGHT            = 104
+  CMD_BRIGHTEN_THE_LIGHT            = 105
+  CMD_DIM_THE_LIGHT                 = 106
+  CMD_ADJUST_BRIGHTNESS_TO_MAX      = 107   ' AdjustBrightnessToMaximum
+  CMD_ADJUST_BRIGHTNESS_TO_MIN      = 108   ' AdjustBrightnessToMinimum
+  CMD_INCREASE_COLOR_TEMPERATURE    = 109
+  CMD_DECREASE_COLOR_TEMPERATURE    = 110
+  CMD_ADJUST_COLOR_TEMP_TO_MAX      = 111   ' AdjustColorTemperatureToMaximum
+  CMD_ADJUST_COLOR_TEMP_TO_MIN      = 112   ' AdjustColorTemperatureToMinimum
+  CMD_DAYLIGHT_MODE                 = 113
+  CMD_MOONLIGHT_MODE                = 114
+  CMD_COLOR_MODE                    = 115
+  CMD_SET_TO_RED                    = 116
+  CMD_SET_TO_ORANGE                 = 117
+  CMD_SET_TO_YELLOW                 = 118
+  CMD_SET_TO_GREEN                  = 119
+  CMD_SET_TO_CYAN                   = 120
+  CMD_SET_TO_BLUE                   = 121
+  CMD_SET_TO_PURPLE                 = 122
+  CMD_SET_TO_WHITE                  = 123
+  CMD_TURN_ON_AC                    = 124
+  CMD_TURN_OFF_AC                   = 125
+  CMD_INCREASE_TEMPERATURE          = 126
+  CMD_DECREASE_TEMPERATURE          = 127
+  CMD_COOL_MODE                     = 128
+  CMD_HEAT_MODE                     = 129
+  CMD_AUTO_MODE                     = 130
+  CMD_DRY_MODE                      = 131
+  CMD_FAN_MODE                      = 132
+  CMD_ENABLE_BLOWING_UP_DOWN        = 133
+  CMD_DISABLE_BLOWING_UP_DOWN       = 134
+  CMD_ENABLE_BLOWING_RIGHT_LEFT     = 135
+  CMD_DISABLE_BLOWING_RIGHT_LEFT    = 136
+  CMD_OPEN_THE_WINDOW               = 137
+  CMD_CLOSE_THE_WINDOW              = 138
+  CMD_OPEN_CURTAIN                  = 139
+  CMD_CLOSE_CURTAIN                 = 140
+  CMD_OPEN_THE_DOOR                 = 141
+  CMD_CLOSE_THE_DOOR                = 142
+
+  ' learning / delete control words
+  CMD_LEARNING_WAKE_WORD            = 200
+  CMD_LEARNING_COMMAND_WORD         = 201
+  CMD_RE_LEARN                      = 202
+  CMD_EXIT_LEARNING                 = 203
+  CMD_I_WANT_TO_DELETE              = 204
+  CMD_DELETE_WAKE_WORD              = 205
+  CMD_DELETE_COMMAND_WORD           = 206
+  CMD_EXIT_DELETING                 = 207
+  CMD_DELETE_ALL                    = 208
+
+
+CON ' ---- Device I2C Addressing and Registers ----
+
+  DEV_ADDR        = $64                                         ' 7-bit I2C address (fixed)
+  DEV_WR          = (DEV_ADDR << 1)                             ' 8-bit write address -> $C8
+  DEV_RD          = (DEV_ADDR << 1) | 1                         ' 8-bit read address  -> $C9
+
+  REG_CMDID       = $02                                         ' read: latched recognized command ID
+  REG_PLAY_CMDID  = $03                                         ' write: play reply audio by command ID
+  REG_SET_MUTE    = $04                                         ' write: 1=mute, 0=unmute
+  REG_SET_VOLUME  = $05                                         ' write: playback volume
+  REG_WAKE_TIME   = $06                                         ' r/w: wake-up duration, seconds (0-255)
+
+
+CON ' ---- Driver Configuration ----
+
+  ' SET_VOLUME is write-only in silicon, so the driver keeps a SHADOW of the volume: it writes this
+  ' known default at start() and updates the shadow on every setVolume(), making getVolume() truthful.
+  ' Change this to set the power-on volume your application wants.
+  DEF_VOLUME      = 7                                           ' volume applied at start() (documented range 1-7)
+
+
+CON ' ---- Status / Error Codes ----
+
+  ' Per DOCs/policy/SPIN2-AUTHORING-GUIDE.md: action methods return a status CODE (E_OK = 0,
+  ' negative = a specific error), never a bare boolean.  Value queries (getCMDID/getVolume/...) return
+  ' their value; the one "is it there?" query (start) is boolean-by-nature and returns TRUE/FALSE.
+  ' Each cause gets its OWN code so a caller can tell failures apart (guide sec 5.6 -- never merge).
+  E_OK            =  0                                          ' success
+  E_NAK           = -1                                          ' device did not ACK a bus byte
+  E_ALREADY       = -2                                          ' startPoller: a poller cog is already running
+  E_NO_COG        = -3                                          ' startPoller: no free cog available to launch
+
+
+CON ' ---- Channel-Based DEBUG (Spin2 v46+) ----
+
+  ' The driver owns DEBUG channel 1 (per the reserved allocation in DOCs/design sec 7: 0=I2C bus,
+  ' 1=voice driver).  DEBUG_MASK selects which DEBUG[n]() channels are COMPILED; a clear bit emits
+  ' no code, so the shipped default (0) has zero overhead.
+  ' To trace driver activity, set:  DEBUG_MASK = (1 << DBG_VOICE)
+  DBG_VOICE       = 1                                           ' voice driver trace -> DEBUG channel 1
+  DEBUG_MASK      = 0                                           ' ship default: channel-1 trace compiled out (set (1 << DBG_VOICE) to trace)
+  VOICE_DEBUG     = (DEBUG_MASK >> DBG_VOICE) & 1               ' 1 when the DBG_VOICE channel is enabled
+
+
+OBJ ' ---- Object References ----
+
+  i2c : "isp_i2c_singleton"                                     ' shared bit-banged I2C bus
+
+
+VAR ' per-instance state
+
+  long  sclPin                                                  ' bus pins (set by start())
+  long  sdaPin
+  long  lastReadTick                                            ' GETCT() of last CMDID bus read (50ms spacing)
+  long  cachedCMDID                                             ' last value read, returned when polled too soon
+  long  speakStartTick                                          ' GETCT() at last playByCMDID() (~1s busy window)
+  long  pollerCogId                                             ' self-poller cog id + 1 (0 = not running)
+  long  latestMailbox                                           ' poller -> foreground latest-CMDID mailbox (hub)
+  long  curVolume                                               ' shadow of last-written volume (SET_VOLUME is write-only)
+  long  pollerStack[64]                                         ' stack for the self-poller cog
+
+
+DAT ' ---- Version String ----
+
+DRIVER_VERSION  byte    "1.0.0", 0                              ' grep'd by version-aware tooling
+
+
+PUB version() : pStr
+'' Return a pointer to the driver version string.
+''
+'' @returns pStr - pointer to the zero-terminated version string
+
+  pStr := @DRIVER_VERSION
+
+
+PUB start(scl, sda, khz, pullup) : bFound
+'' Initialize the I2C bus on the given pins, probe for the DF2301Q, and on success seed the volume shadow.
+''
+'' @param scl - I2C clock pin
+'' @param sda - I2C data pin
+'' @param khz - bus speed in kHz (100 standard / 400 / 1000)
+'' @param pullup - internal pull-up: i2c.PU_NONE / PU_1K5 / PU_3K3 / PU_15K
+'' @returns bFound - TRUE if the device acknowledges its address, FALSE if absent
+
+  sclPin := scl
+  sdaPin := sda
+  i2c.setup(scl, sda, khz, pullup)
+  bFound := i2c.present(DEV_WR)                                 ' start + write(addr); ACK == present
+  i2c.stop()                                                   ' finish the probe transaction
+  waitms(5)                                                    ' let the bus settle to its idle level
+  debug[DBG_VOICE]("voice: start present=", udec_(bFound))
+  ' bring-up aid: idle bus levels -- both should read 1 (released to pull-ups); a 0 = stuck line
+  debug[DBG_VOICE]("voice: idle scl=", udec_(pinread(sclPin)), " sda=", udec_(pinread(sdaPin)))
+  if bFound
+    setVolume(DEF_VOLUME)                                       ' apply known default -> seeds the volume shadow
+
+
+PUB getCMDID() : cmdId
+'' Get the latest recognized command-word ID (0 = none recognized); simple-profile alias of pollCMDID().
+''
+'' @returns cmdId - latest recognized command-word ID, 0 if none
+
+  cmdId := pollCMDID()
+
+
+PUB pollCMDID() : cmdId
+'' Non-blocking poll for the latest recognized command-word ID (0 = none).
+''
+'' @returns cmdId - latest recognized command-word ID, 0 if none
+
+  ' Enforces >=50ms between actual bus reads via a tick check: if polled sooner, returns the cached
+  ' value WITHOUT touching the bus.  No waitms -- safe to call from a shared scanner cog.
+  cmdId := cachedCMDID                                          ' default: last cached value (too-soon poll)
+  if (getct() - lastReadTick) +>= (clkfreq / 20)               ' >=50ms since the last bus read?
+    cachedCMDID := readReg(REG_CMDID)
+    lastReadTick := getct()
+    cmdId := cachedCMDID
+    if cmdId                                                    ' trace only recognitions, not idle polls
+      debug[DBG_VOICE]("voice: recognized CMDID=", udec_(cmdId))
+
+
+PUB playByCMDID(cmdId) : status
+'' Play the reply audio for command ID cmdId (fire-and-return; ~1s window reported by isSpeaking()).
+''
+'' @param cmdId - command-word ID whose reply audio to play
+'' @returns status - E_OK on success, E_NAK if the device did not ACK
+
+  debug[DBG_VOICE]("voice: play CMDID=", udec_(cmdId))
+  status := writeReg(REG_PLAY_CMDID, cmdId)
+  speakStartTick := getct()
+
+
+PUB isSpeaking() : bSpeaking
+'' Report whether the module is still within the ~1s play window opened by the last playByCMDID().
+''
+'' @returns bSpeaking - TRUE while still within the ~1 second play window
+
+  bSpeaking := (getct() - speakStartTick) +< clkfreq           ' elapsed < 1 second?
+
+
+PUB enterWakeState() : status
+'' Programmatically put the module into its wake state via the play path.
+''
+'' @returns status - E_OK on success, E_NAK if the device did not ACK
+
+  ' F1 (DOCs/reference sec 7): the exact wake CMDID -- HelloRobot(2) vs WakeUpWordsForLearning(1) -- is
+  ' confirmed on hardware in task #9.  Callers use THIS method, never a bare literal.
+  status := playByCMDID(CMD_HELLO_ROBOT)
+
+
+PUB getWakeTime() : wakeSecs
+'' Read the configured wake-up duration, in seconds.
+''
+'' @returns wakeSecs - wake-up duration in seconds (0-255)
+
+  wakeSecs := readReg(REG_WAKE_TIME)
+  debug[DBG_VOICE]("voice: getWakeTime ", udec_(wakeSecs))
+
+
+PUB setWakeTime(wakeSecs) : status
+'' Set the wake-up duration, 0..255 seconds.
+''
+'' @param wakeSecs - wake-up duration in seconds (0-255)
+'' @returns status - E_OK on success, E_NAK if the device did not ACK
+
+  debug[DBG_VOICE]("voice: setWakeTime ", udec_(wakeSecs))
+  status := writeReg(REG_WAKE_TIME, wakeSecs)
+
+
+PUB setVolume(volLevel) : status
+'' Set playback volume and update the volume shadow read back by getVolume().
+''
+'' @param volLevel - playback volume (documented 1-7; wider range per F2, passed through unclamped)
+'' @returns status - E_OK on success, E_NAK if the device did not ACK
+
+  debug[DBG_VOICE]("voice: setVolume ", udec_(volLevel))
+  status := writeReg(REG_SET_VOLUME, volLevel)
+  if status == E_OK
+    curVolume := volLevel                                       ' track for getVolume() only if the device took it
+
+
+PUB getVolume() : volLevel
+'' Return the current playback volume from the driver's shadow (SET_VOLUME is write-only in silicon).
+''
+'' @returns volLevel - last volume commanded (seeded by DEF_VOLUME at start())
+
+  volLevel := curVolume
+
+
+PUB setMuteMode(muteOn) : status
+'' Set mute mode -- nonzero muteOn mutes, 0 unmutes (normalized to 1/0 for the device).
+''
+'' @param muteOn - nonzero to mute, 0 to unmute
+'' @returns status - E_OK on success, E_NAK if the device did not ACK
+
+  debug[DBG_VOICE]("voice: setMute ", udec_(muteOn))
+  status := writeReg(REG_SET_MUTE, (muteOn <> 0) & 1)
+
+
+' =================================================================================================
+'   Self-poller cog (usage profile 2)
+'
+'   While the poller runs it OWNS the shared I2C bus.  Callers must read results via getLatest()
+'   ONLY, and must configure volume/mute/wake-time BEFORE startPoller() (reconfigure = stopPoller,
+'   change, startPoller).  Do NOT call the synchronous bus methods (getCMDID/playByCMDID/set*) while
+'   the poller is running -- two cogs on one bus.
+' =================================================================================================
+
+PUB startPoller() : status | startedCog
+'' Launch a background cog that polls the sensor and publishes the latest CMDID to a mailbox.
+''
+'' @returns status - E_OK on success; E_ALREADY if a poller is already running; E_NO_COG if no free cog
+
+' Local Variables:
+' @local startedCog - cog id returned by cogspin (-1 == none free)
+
+  if pollerCogId <> 0                                          ' a poller cog is already running
+    status := E_ALREADY
+  else
+    startedCog := cogspin(NEWCOG, pollerTask(), @pollerStack)
+    if startedCog == -1                                        ' no free cog available
+      status := E_NO_COG
+    else
+      pollerCogId := startedCog + 1                            ' store cog id + 1 (0 = not running)
+      status := E_OK
+      debug[DBG_VOICE]("voice: startPoller cog=", udec_(startedCog))
+
+
+PUB stopPoller()
+'' Stop the background poller cog and release the bus.
+''
+
+  if pollerCogId <> 0
+    cogstop(pollerCogId - 1)
+    pollerCogId := 0
+    latestMailbox := 0
+    debug[DBG_VOICE]("voice: stopPoller")
+
+
+PUB getLatest() : cmdId
+'' Non-blocking read of the latest recognized CMDID published by the poller (cleared on read).
+''
+'' @returns cmdId - latest CMDID since the previous read, 0 if none
+
+  cmdId := latestMailbox
+  latestMailbox := 0
+  if cmdId                                                     ' trace deliveries, not empty reads
+    debug[DBG_VOICE]("voice: getLatest CMDID=", udec_(cmdId))
+
+
+PRI pollerTask() | cmdId
+' Background-cog body: poll the sensor and publish non-zero results to the mailbox.  This is the
+' one place a blocking wait is allowed, because it runs in the poller's OWN cog.
+
+' Local Variables:
+' @local cmdId - latest polled command-word ID
+
+  repeat
+    cmdId := pollCMDID()
+    if cmdId <> 0
+      latestMailbox := cmdId
+    waitms(50)
+
+
+PRI writeReg(regAddr, byteVal) : status | ackWr, ackReg, ackVal
+' Write one byte byteVal to device register regAddr.
+'
+' @param regAddr - device register index
+' @param byteVal - byte value to write
+' @returns status - E_OK if the device ACKed every byte, E_NAK if any byte was not acknowledged
+
+' Local Variables:
+' @local ackWr - ACK bit from the address-write byte
+' @local ackReg - ACK bit from the register-index byte
+' @local ackVal - ACK bit from the data byte
+
+  i2c.start()
+  ackWr  := i2c.write(DEV_WR)
+  ackReg := i2c.write(regAddr)
+  ackVal := i2c.write(byteVal)
+  i2c.stop()
+  status := E_OK
+  if (ackWr | ackReg | ackVal)                                 ' any non-zero ackbit == a NAK
+    status := E_NAK
+    debug[DBG_VOICE]("voice: write NAK reg=$", uhex_(regAddr), " val=", udec_(byteVal))
+
+
+PRI readReg(regAddr) : byteVal
+' Read one byte from device register regAddr.  Uses a REPEATED START (no STOP between the register
+' write and the data read), as the DF2301Q requires; NAKs the single byte to end the read.  No trace
+' here: this is the poll-loop primitive; bus-byte detail is the I2C singleton's channel (DBG_I2C).
+'
+' @param regAddr - device register index
+' @returns byteVal - the byte read from the register
+
+  i2c.start()
+  i2c.write(DEV_WR)                                            ' point at the register
+  i2c.write(regAddr)
+  i2c.start()                                                  ' REPEATED start (matches reference)
+  i2c.write(DEV_RD)
+  byteVal := i2c.read(i2c.NAK)                                 ' one byte, NAK on last
+  i2c.stop()
+
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}
