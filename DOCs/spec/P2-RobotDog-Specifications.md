@@ -30,7 +30,7 @@ The firmware runs as **three cogs** (ToOps §2): a comms/orchestrator cog (cog 0
 body-control cog (cog 1, the sole I²C-bus owner), and the discrete-pin IO cog (cog 2). A caller on
 cog 0 drives the robot **only** through two hub mailboxes — never by touching a bus or pin:
 
-- **Mailbox A → backend** (`isp_robot_dog`): motion, posture, head, gestures; reports attitude,
+- **Mailbox A → backend** (`isp_dog_motion`): motion, posture, head, gestures; reports attitude,
   battery, mode.
 - **Mailbox B → IO** (`isp_io_controller`): LED ring, buzzer, ultrasonic ranging; reports distance,
   ping sequence, LED-busy.
@@ -129,7 +129,7 @@ Smaller = slower and smoother (more frames per stride).
 
 ## 4. Command & telemetry interface
 
-### 4.1 Mailbox A — backend (`isp_robot_dog`)
+### 4.1 Mailbox A — backend (`isp_dog_motion`)
 
 **Post:** `dog.postCommand(commandId, arg0, arg1, arg2, arg3)` — latest-wins, single slot; args are
 written first and the sequence word last (lock-free publish, ToOps §4).

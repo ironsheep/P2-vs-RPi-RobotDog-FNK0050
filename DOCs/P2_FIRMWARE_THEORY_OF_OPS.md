@@ -67,7 +67,7 @@ to spend a cog per concurrent activity, so we have ample headroom (e.g. a future
 behavior/autonomy cog).
 
 > **As-built (build 0.1.1):** `src/robot_dog_top.spin2` realizes this map — cog 0 runs its
-> `main()`/scripted orchestrator, `cogspin`s `isp_robot_dog.start(13,15)` onto cog 1 and
+> `main()`/scripted orchestrator, `cogspin`s `isp_dog_motion.start(13,15)` onto cog 1 and
 > `isp_io_controller.start(8,10,11,9)` onto cog 2. This is the **first launch of the IO cog**. Cog
 > 0 is presently a scripted demo, not yet the real Wi-Fi/serial command link.
 
@@ -238,7 +238,7 @@ Because `motionTask` checks the latched `mode` (set by `dispatchTask`) every ste
 new command preempts a running gait within one yield cycle — responsive, without preemption.
 
 IK ownership: `isp_leg.moveToXYZ(x,y,z)` does the per-leg inverse kinematics
-(`coordinateToAngle` + side-mirror + that leg's calibration); `isp_robot_dog` generates the
+(`coordinateToAngle` + side-mirror + that leg's calibration); `isp_dog_motion` generates the
 gait/pose target coordinates and drives all four legs. See [`../src/README.md`](../src/README.md) §3.
 
 ### 6.1 Smooth-motion engine (implementation guide)
@@ -253,7 +253,7 @@ mechanical/dynamic — gait tuning + IMU balance.)
 
 **Goal:** regular, fluid motion with **no gaps or snaps** between moves. Today's code *snaps*
 (`isp_i2c_pca9685_servo.writePosition` writes once; `standPose`/`relaxPose` set final angles in one
-shot). The engine below replaces that. **`isp_leg` is the IK/angle provider; `isp_robot_dog` is the
+shot). The engine below replaces that. **`isp_leg` is the IK/angle provider; `isp_dog_motion` is the
 conductor** — coordination (timing, synchronization) lives at the **body** level, because
 synchronized, simultaneous multi-leg motion needs one shared timebase.
 
@@ -296,7 +296,7 @@ synchronized, simultaneous multi-leg motion needs one shared timebase.
   command; ours blends/redirects mid-motion via the latched `mode` + current-pose blend).
 - **Ease-in/out** curves (Freenove steps are *linear* / constant-speed) — our refinement.
 
-**Refactor path:** give `isp_robot_dog` body-level `current[]`/`target[]` joint (or foot-XYZ) arrays
+**Refactor path:** give `isp_dog_motion` body-level `current[]`/`target[]` joint (or foot-XYZ) arrays
 and a `speed`/duration; turn `motionTask` into the fixed-rate interpolator that writes all legs each
 frame (a `run()`-equivalent); express poses as N-step lerps and gaits as Cartesian phase trajectories
 — porting `Control.py`'s math. Build this **before** authoring the full motion catalog, since it
@@ -304,7 +304,7 @@ changes how every motion is issued.
 
 ### 6.2 Smooth-motion engine (as-built, build 0.1.1)
 
-The §6.1 guide is realized in `src/isp_robot_dog.spin2`. What the engine actually does:
+The §6.1 guide is realized in `src/isp_dog_motion.spin2`. What the engine actually does:
 
 - **Body-level state.** Foot targets in mm, leg order **FL=0 / BL=1 / FR=2 / BR=3**: `curX/Y/Z[]`
   (where the feet are now), `tgtX/Y/Z[]` (where the active move eases to), `startX/Y/Z[]` (the lerp

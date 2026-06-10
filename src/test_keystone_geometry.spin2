@@ -24,7 +24,7 @@ CON
   NUM_LEGS   = 4                    ' leg order 0=FL 1=BL 2=FR 3=BR
 
 OBJ
-  dog : "isp_robot_dog"                                        ' source of the neutral foot targets (no start())
+  dog : "isp_dog_motion"                                        ' source of the neutral foot targets (no start())
   leg : "isp_leg"                                              ' the IK -> servo pipeline under test
   cal : "isp_calibration"                                      ' per-joint + stance trims (same committed DAT dog uses)
 

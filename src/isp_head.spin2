@@ -18,7 +18,7 @@
    object is intentionally thin; it earns its keep as the mount point for the future
    head-pan + ultrasonic "scan the room" behavior.
 
-   The PCA9685 controller must already be started/configured by the owner (isp_robot_dog)
+   The PCA9685 controller must already be started/configured by the owner (isp_dog_motion)
    before any pan call moves hardware -- this object only owns its one servo channel.
 }
 

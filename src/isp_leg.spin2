@@ -15,7 +15,7 @@
 
    A leg is created with its body position -- init(side, end) -- and derives its three PCA9685
    servo channels and its joint-angle mirror from that identity. The PCA9685 controller must
-   already be started/configured by the owner (isp_robot_dog) before any move drives hardware.
+   already be started/configured by the owner (isp_dog_motion) before any move drives hardware.
 
    Channel map (INFERRED from Freenove Control.run(); verify on hardware):
      FL Left/Front : coxa 4, femur 3, tibia 2      BL Left/Back : coxa 7, femur 6, tibia 5

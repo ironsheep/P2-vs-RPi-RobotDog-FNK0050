@@ -1,7 +1,7 @@
 {Spin2_v47}
 '' =================================================================================================
 ''
-''   File....... isp_robot_dog.spin2
+''   File....... isp_dog_motion.spin2
 ''   Purpose.... TIER-4 body coordinator: 4 legs + head + IMU + battery; gaits, poses, gestures
 ''   Authors.... Stephen M Moraco
 ''               -- Copyright (c) 2026 Iron Sheep Productions, LLC

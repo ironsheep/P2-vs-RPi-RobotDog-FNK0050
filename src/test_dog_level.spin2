@@ -41,7 +41,7 @@ CON
   COLOR_ALIVE   = $00_20_00          ' dim green = "IO cog alive" (static, no animation, no ranging)
 
 OBJ
-  dog     : "isp_robot_dog"                                  ' cog1: I2C bus owner, mailbox A
+  dog     : "isp_dog_motion"                                  ' cog1: I2C bus owner, mailbox A
   io      : "isp_io_controller"                              ' cog2: discrete pins, mailbox B (quiescent here)
   cal     : "isp_calibration"                                ' echo the currently-applied stance trim
   stack   : "isp_stack_check"                                ' COG stack-overflow detector

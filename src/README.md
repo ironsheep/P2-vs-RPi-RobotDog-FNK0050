@@ -29,7 +29,7 @@ Tier 4 is the behavioral/coordination layer that composes devices into a robot.
 | **1 — transport** | Raw hardware access; one bus / one signal. Knows no device. | bytes, ACK/NAK, pin transitions | `isp_i2c_singleton`, `isp_serial_singleton`, `isp_ws2812.streamBuffer()` |
 | **2 — chip** | Register-level access to one device. | register addresses, raw counts | `isp_i2c_pca9685`, `isp_i2c_ads7830` |
 | **3 — semantics** | The *user's* mental model of one part. | degrees, volts, named colors | `isp_i2c_pca9685_servo`, `isp_battery_monitor`, `isp_leg`, `isp_head`, `isp_led_ring` |
-| **4 — coordination** | Composes many parts into whole-robot behavior. | gaits, poses, commands | `isp_robot_dog` |
+| **4 — coordination** | Composes many parts into whole-robot behavior. | gaits, poses, commands | `isp_dog_motion` |
 
 Three structural notes:
 
@@ -50,10 +50,10 @@ Three structural notes:
 
 ```
 robot_dog_top        (T4 top: cog0 orchestrator; cogspins the two service cogs)
-  ├─ isp_robot_dog       (cog1: I²C bus owner, mailbox A) ───────────────────────┐
+  ├─ isp_dog_motion       (cog1: I²C bus owner, mailbox A) ───────────────────────┐
   └─ isp_io_controller   (cog2: discrete-pin owner, mailbox B) ──────────┐       │
                                                                          │       │
-isp_robot_dog            (T4: 4 legs + head + IMU + battery; smooth-motion engine, gait catalog, poses, gestures, leveling)
+isp_dog_motion            (T4: 4 legs + head + IMU + battery; smooth-motion engine, gait catalog, poses, gestures, leveling)
   ├─ isp_leg  ×4         (T3: one leg; moveToXYZ via shared IK, side-mirror, per-leg calibration)
   │   └─ isp_i2c_pca9685_servo  ×3   (T3 servo, seed)
   ├─ isp_head            (T3: pan/center/sweep, PCA9685 ch 15)
@@ -96,13 +96,13 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | `isp_leg.spin2` | 3 | one leg (3 servos) | `init(side, ending)`, `setJointAngles`, `moveToXYZ` (CORDIC IK ⚠ verify) |
 | `isp_head.spin2` | 3 | head pan (ch 15) | `panTo`/`center`/`sweep` |
 | `isp_calibration.spin2` | 3 | per-robot trims | per-joint servo trims (metered) + head trim + **static stance leveling** (`stanceTrimY`) |
-| `isp_robot_dog.spin2` | 4 | body coordinator | `{Spin2_v47}` cooperative tasks; mailbox A; smooth-motion engine (50 Hz eased), full gait catalog + speed knob, stand/relax/sit, hello, leveling ⚠ verify |
+| `isp_dog_motion.spin2` | 4 | body coordinator | `{Spin2_v47}` cooperative tasks; mailbox A; smooth-motion engine (50 Hz eased), full gait catalog + speed knob, stand/relax/sit, hello, leveling ⚠ verify |
 | `isp_io_controller.spin2` | 4 | discrete-pin IO cog | mailbox B; non-blocking LED + ranging + buzzer (see row above) |
 | `robot_dog_top.spin2` | 4 | integrated 3-cog top | `cogspin`s backend + IO cogs; scripted demo orchestrator over mailboxes A + B ⚠ verify |
 
 There is **no shared OBEX driver** for the ADS7830, MPU6050, or HC-SR04 — each is
 hand-rolled on the seed I²C singleton (or a smart pin). The **full gait catalog**
-(forward/backward, turn L/R, sidestep L/R) and the hello gesture in `isp_robot_dog` are
+(forward/backward, turn L/R, sidestep L/R) and the hello gesture in `isp_dog_motion` are
 implemented on the smooth-motion engine (build 0.1.1); on-bench behavioral verification is
 pending (the trajectory math is still ⚠ verify).
 
@@ -127,9 +127,9 @@ role from that identity.
 - **End** owns the **gait phase** and stance-offset sign. Diagonal phase pairs are {FL,BR}
   and {FR,BL}.
 - **IK lives in `isp_leg`** (`moveToXYZ` = shared `coordinateToAngle` + side-mirror + this
-  leg's calibration → 3 servo writes). The **body coordinator** (`isp_robot_dog`) generates
+  leg's calibration → 3 servo writes). The **body coordinator** (`isp_dog_motion`) generates
   per-leg target coordinates for gaits/poses and calls each leg.
-- **Motion timing lives at the body level (the smooth-motion engine).** `isp_robot_dog` owns a
+- **Motion timing lives at the body level (the smooth-motion engine).** `isp_dog_motion` owns a
   CT-gated 50 Hz frame loop with body-level foot-target arrays (`cur/tgt/start[]`, leg order
   FL/BL/FR/BR), an ease-in/out smoothstep, per-frame reachability guard, and blend-from-current —
   so all 13 joints share one timebase and start/arrive together (no per-servo slew, no snaps). It
@@ -155,7 +155,7 @@ role from that identity.
 Head is a single DOF (PCA9685 **ch 15**, center ≈ 90°, ~50–130°). `isp_head` is intentionally
 thin — it earns its keep as the mount point for the future head-pan + ultrasonic scan.
 Whole-robot gestures (push-ups, the "hello" wave — which actually waves a *leg*) belong to
-`isp_robot_dog`, not the head.
+`isp_dog_motion`, not the head.
 
 ---
 
@@ -292,7 +292,7 @@ comms cog (Wi-Fi/serial command link) is still **TODO**.
   prefix. The guide's checklist is the pre-commit gate.
 - **Naming:** `isp_<...>.spin2`, Iron Sheep Productions prefix. If the device is reached over
   **I²C**, put `i2c` in the name (`isp_i2c_ads7830`); smart-pin / single-signal / behavioral
-  objects omit it (`isp_ws2812`, `isp_hcsr04`, `isp_leg`, `isp_robot_dog`).
+  objects omit it (`isp_ws2812`, `isp_hcsr04`, `isp_leg`, `isp_dog_motion`).
 - **Debug:** every object takes an `enableDebug(T/F)` and routes through the shared
   `isp_serial_singleton` so diagnostics interleave on one port.
 - **License:** MIT, © Iron Sheep Productions, LLC (see each file's footer). Upstream
