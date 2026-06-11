@@ -1,0 +1,36 @@
+'' =================================================================================================
+''   File....... test_led_onoff.spin2
+''   Purpose.... AUTO-RUN minimal bring-up: WS2812 LED ring (P8) -- turn all pixels ON, then OFF.
+''   Authors.... Stephen M Moraco -- (c) 2026 Iron Sheep Productions, LLC  (MIT)
+'' =================================================================================================
+'
+'  Download-to-RAM and run (compile with -d for DEBUG). Emits "TEST_DONE" so a headless terminal
+'  exits on it. Sequence: solid WHITE (all 7 px on) for ~2 s, then OFF.
+
+CON
+  _clkfreq    = 200_000_000
+  DEBUG_BAUD  = 2_000_000
+  PIN_WS2812  = 8
+  LED_WHITE   = $FF_FF_FF
+  ON_MS       = 2000
+
+OBJ
+  ring : "isp_led_ring"
+
+PUB main()
+    waitms(50)
+    DEBUG("=== LED on/off test (P8) ===")
+    ring.start(PIN_WS2812)
+
+    DEBUG("LEDs ON (white)")
+    ring.setColor(LED_WHITE)
+    ring.setMode(ring.MODE_SOLID)
+    ring.update()
+    waitms(ON_MS)
+
+    DEBUG("LEDs OFF")
+    ring.setMode(ring.MODE_OFF)
+    ring.update()
+
+    DEBUG("TEST_DONE")
+    repeat
