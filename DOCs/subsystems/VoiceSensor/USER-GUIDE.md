@@ -182,6 +182,92 @@ learning workflow — see the product card / reference doc). The module then rec
 reports their **slot ID (5-21)** — but it **stores no text**. So your **application is the only
 place** that knows "slot 7 means 'good night'."
 
+### On-device training & deletion (Gravity voice module cheat sheet)
+
+You train and delete words **on the module itself, by voice**, using its built-in learning workflow.
+Wake the module first (default wake word **"Hello Robot"**), then speak the control phrases below.
+
+**Train a NEW WAKE WORD (greeting)**
+1. Say: **"Hello Robot"**  (or the current wake word)
+2. Say: **"Learning wake word"**
+3. When prompted, repeat your NEW wake word 2-3 times
+
+**Delete the WAKE WORD**
+1. Say: **"Hello Robot"**
+2. Say: **"I want to delete"**
+3. When the menu plays, say: **"Delete wake word"**
+4. Confirm when it asks (e.g. say **"Yes"**)
+
+**Train a NEW COMMAND WORD**
+1. Say: **"Hello Robot"**
+2. Say: **"Learning command word"**
+3. When prompted, repeat the NEW command 2-3 times
+
+**Delete ONE COMMAND WORD**
+1. Say: **"Hello Robot"**
+2. Say: **"I want to delete"**
+3. When the menu plays, say: **"Delete a command word"**
+4. Follow its prompts to choose which word & confirm
+
+**Delete ALL learned COMMAND WORDS**
+1. Say: **"Hello Robot"**
+2. Say: **"I want to delete"**
+3. When the menu plays, say: **"Delete all commands"**
+4. Confirm when it asks (e.g. say **"Yes"**)
+
+> **Notes**
+> - **17 custom command words max** (slots 5-21), plus the built-ins.
+> - Only **one** custom wake word at a time.
+> - **Train a whole set in ONE uninterrupted session.** Interrupting and resuming corrupts the module's
+>   sequential slot assignment — words added after a break may silently fail to commit and then mis-recognize
+>   onto earlier slots (observed on this hardware 2026-06-10). Before training a fresh set, say
+>   **"Delete all commands"** to clear the old ones, then train straight through without stopping.
+
+### How to program the dog's command set (the working 17)
+
+This is the robot's trained vocabulary. Program these 17 words **on the device, in this exact order**, and
+the shipped firmware (`robot_dog_top`'s `dogVocab` + `voiceToDogCmd()`) recognizes them with **no code
+changes** — verified on hardware 2026-06-11 (catalog run, clean 1:1).
+
+Each row shows **two numbers on purpose:**
+- **Train #** — the count the module prompts you with as you add words (1st word, 2nd word, …). Use it to
+  **track which word you're on** while training.
+- **CMDID** — the slot ID the module assigns (5..21) and reports to the firmware. This is what the code maps.
+
+Because the module assigns slots **in training order**, training in this order makes Train # *N* land on
+**CMDID = N + 4** — that's the whole table:
+
+| Train # | CMDID | Say this word | Dog does |
+|------:|------:|---------------|----------|
+| 1  | 5  | **Stand**       | ease to a neutral stand |
+| 2  | 6  | **Sit**         | sit (rear lowered) |
+| 3  | 7  | **Lie Down**    | low flat rest |
+| 4  | 8  | **Crouch**      | low symmetric crouch |
+| 5  | 9  | **Relax**       | tucked resting pose |
+| 6  | 10 | **Take a Bow**  | play bow (front low, rear up) |
+| 7  | 11 | **Forward**     | walk forward |
+| 8  | 12 | **Backward**    | walk backward |
+| 9  | 13 | **Turn Left**   | turn left in place |
+| 10 | 14 | **Turn Right**  | turn right in place |
+| 11 | 15 | **Halt**        | stop, hold a stand |
+| 12 | 16 | **Say Hi**      | one-shot wave |
+| 13 | 17 | **Shake**       | sit + offer a paw (shake) |
+| 14 | 18 | **Salute**      | raise a paw to a salute |
+| 15 | 19 | **Push Ups**    | flex down/up a few times |
+| 16 | 20 | **Nod Yes**     | nod the head "yes" |
+| 17 | 21 | **Parade Rest** | parade-rest posture |
+
+**Steps:**
+1. **Delete all commands** first (see the cheat sheet above) so slots start fresh at 5.
+2. Train the 17 above **in order, in ONE uninterrupted session** (don't stop to do anything else — a break
+   corrupts the slot assignment).
+3. Verify with `src/test_voice_map.spin2` (catalog mode): say each word, "Read Compass" to advance; the
+   SUMMARY should read a clean **5 → 21**, every word distinct. Run it twice and diff — identical = trusted.
+
+**Built-in aliases (already in the code):** the factory words **"Go Forward"** (CMDID 22) and **"Retreat"**
+(CMDID 23) also drive **Forward** and **Backward** — they're always recognized, so either the custom word
+or the built-in works. See `DOCs/subsystems/VoiceSensor/VOICE-COMMAND-MAP.md` (the authoritative map).
+
 ### Telling the library what your custom words mean
 Declare your custom vocabulary as an **inline table** in your DAT and register it once. Each entry is
 **one index byte** (the custom slot) followed immediately by a **zero-terminated phrase**; a single

@@ -116,17 +116,17 @@ DAT ' ---- dog custom-word vocabulary (training order == CMDID 5..21; see DOCs/s
     byte  7, "Lie Down", 0
     byte  8, "Crouch", 0
     byte  9, "Relax", 0
-    byte 10, "Bow", 0
+    byte 10, "Take a Bow", 0
     byte 11, "Forward", 0
     byte 12, "Backward", 0
     byte 13, "Turn Left", 0
     byte 14, "Turn Right", 0
     byte 15, "Halt", 0
-    byte 16, "Wave", 0
+    byte 16, "Say Hi", 0
     byte 17, "Shake", 0
     byte 18, "Salute", 0
     byte 19, "Push Ups", 0
-    byte 20, "Nod", 0
+    byte 20, "Nod Yes", 0
     byte 21, "Parade Rest", 0
     byte  0                                                   ' end-of-table marker
 
@@ -221,12 +221,16 @@ PRI voiceToDogCmd(voiceCmdId) : dogCmd
         13: dogCmd := dog.CMD_TURN_LEFT
         14: dogCmd := dog.CMD_TURN_RIGHT
         15: dogCmd := dog.CMD_STOP
-        16: dogCmd := dog.CMD_HELLO                          ' "Wave"
+        16: dogCmd := dog.CMD_HELLO                          ' "Say Hi"
         17: dogCmd := dog.CMD_SHAKE
         18: dogCmd := dog.CMD_SALUTE
         19: dogCmd := dog.CMD_PUSHUPS
         20: dogCmd := dog.CMD_NOD
         21: dogCmd := dog.CMD_PARADE_REST
+        ' built-in aliases: factory-trained words that mean the same as a custom command (always reliable,
+        ' and they cover the near-miss where the module hears the built-in instead of our custom word)
+        22: dogCmd := dog.CMD_FORWARD                        ' built-in "Go Forward"  (alias of custom "Forward" 11)
+        23: dogCmd := dog.CMD_BACKWARD                       ' built-in "Retreat"     (alias of custom "Backward" 12)
 
 PRI dispatchToBackend(dogCmd) | bComplete, mode, bBusy, bHalted, bGate
 ' Motion gate: from existing backend signals decide whether dogCmd could hand off to mailbox A RIGHT

@@ -21,29 +21,47 @@ across power cycles.)
 | 3  | 7  | Lie Down     | `CMD_LIE_DOWN`   | posture |
 | 4  | 8  | Crouch       | `CMD_CROUCH`     | posture |
 | 5  | 9  | Relax        | `CMD_RELAX`      | posture |
-| 6  | 10 | Bow          | `CMD_BOW`        | trick |
+| 6  | 10 | Take a Bow   | `CMD_BOW`        | trick |
 | 7  | 11 | Forward      | `CMD_FORWARD`    | gait (latched) |
 | 8  | 12 | Backward     | `CMD_BACKWARD`   | gait (latched) |
 | 9  | 13 | Turn Left    | `CMD_TURN_LEFT`  | gait (latched) |
 | 10 | 14 | Turn Right   | `CMD_TURN_RIGHT` | gait (latched) |
 | 11 | 15 | Halt         | `CMD_STOP`       | stop |
-| 12 | 16 | Wave         | `CMD_HELLO`      | one-shot |
+| 12 | 16 | Say Hi       | `CMD_HELLO`      | one-shot |
 | 13 | 17 | Shake        | `CMD_SHAKE`      | one-shot |
 | 14 | 18 | Salute       | `CMD_SALUTE`     | one-shot |
 | 15 | 19 | Push Ups     | `CMD_PUSHUPS`    | one-shot |
-| 16 | 20 | Nod          | `CMD_NOD`        | one-shot |
+| 16 | 20 | Nod Yes      | `CMD_NOD`        | one-shot |
 | 17 | 21 | Parade Rest  | `CMD_PARADE_REST`| posture |
+
+## Built-in aliases (factory words mapped as extra triggers)
+
+A couple of our custom words are acoustically close to the module's **built-in** command words, so the
+recognizer occasionally returns the built-in instead. Those built-ins are factory-trained (very reliable)
+and mean the same thing, so we map them as aliases in `voiceToDogCmd()` — say either word, same action:
+
+| Built-in CMDID | Built-in phrase | Mapped to |
+|---:|---|---|
+| 22 | "Go Forward" | `CMD_FORWARD` (alias of custom "Forward" = 11) |
+| 23 | "Retreat" | `CMD_BACKWARD` (alias of custom "Backward" = 12) |
+
+(The built-in `Turn Left/Right NN Degrees` words are **not** mapped — they're specific-angle turns, not the
+continuous gait our "Turn Left/Right" runs.)
 
 **Excluded** (panel had ~19 behaviors, only 17 slots): `STEP_LEFT` / `STEP_RIGHT` (acoustically close to
 "Turn Left/Right", subtle on camera). Also panel-UI-only, not voice behaviors: head-pan angles, the speed
 selector, SPIN (a timed turn), SPEAK (bark+nod composite).
 
 ## Status
-- 2026-06-10 run 1 (`test_voice_map`, `src/logs/debug_260610-133727.log`): **slots 5–15 verified** —
-  Stand…Halt all matched in order (train-order = CMDID-order confirmed). **Slots 16–21 NOT on the
-  device** — Wave/Shake/Salute/Push Ups/Nod/Parade Rest mis-recognized onto existing slots (6/8/9), i.e.
-  the last 6 words never trained. Renamed slot 16 "Hello" -> "Wave" (collided with the "Hello Peabody"
-  wake phrase).
-- **Next:** (re)train slots 16–21 = Wave, Shake, Salute, Push Ups, Nod, Parade Rest, then re-run
-  `test_voice_map` for a clean 17/17. If they still won't take, the device may cap custom words below 17
-  -> trim the table to fit. Then wire `voiceToDogCmd()` + LED feedback.
+- 2026-06-10/11 (4 catalog runs): **slots 5–15 reliably trained** (Stand…Halt, 1:1 in order). **16–21
+  never committed** — those words alias onto 6/7/8/9 (multiple words -> same CMDID). ROOT CAUSE
+  (per Stephen): the original training session was **interrupted mid-way** and words were added after a
+  break, which corrupts the DF2301Q's sequential slot assignment -- so the "~11 cap" is likely an
+  artifact of the broken session, not a real device limit.
+- **Plan (2026-06-11):** **wipe all custom words, retrain all 17 in ONE uninterrupted pass** in the order
+  above, then catalog twice (`test_voice_map`) and diff the SUMMARY blocks -- identical == trusted. This
+  answers both unknowns: *can we train cleanly?* and *can we identify the trained words?*
+- **Easier-to-train words applied** (single-syllable words train poorly): Bow -> **"Take a Bow"**,
+  Hello/Wave -> **"Say Hi"** (also dodges the "Hello Peabody" wake phrase), Nod -> **"Nod Yes"**.
+- The robot is already wired (`voiceToDogCmd()`); once the catalog confirms, trim only if some slots
+  still won't take, then add LED feedback.
