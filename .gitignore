@@ -257,3 +257,5 @@ src/pnut-term-settings.json
 src/tests/recordings/catalog.json
 *.gz
 /tasks
+DOCs/p2kb/p2kb-object-shaping-handoff.zip
+/DOCs/p2kb
