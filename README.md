@@ -73,14 +73,16 @@ firmware in `src/` is under development.
 
 ## Possible future directions
 
-These are **candidate** directions for after the current port is fully bench-certified —
-**none is committed or in progress**, and the current firmware does not depend on any of them.
-Each is an *input* that posts into the existing cog-0 command mailboxes, so the motion engine
+These are **candidate** directions for after the current port is fully bench-certified — the
+**remaining** items are not committed or in progress, and the current firmware does not depend on any
+of them. Each is an *input* that posts into the existing cog-0 command mailboxes, so the motion engine
 needs no change. **Full detail — hardware candidates, interfaces, and P2-integration notes — is in
 [`DOCs/FUTURE-DIRECTIONS.md`](DOCs/FUTURE-DIRECTIONS.md).**
 
-- **Speech recognition** *(short-term — next up)* — spoken commands ("sit", "shake", …) via a
-  recognition module (UART / I²C) feeding the command mailboxes.
+- **Speech recognition** *(✅ implemented in build 0.3.0)* — spoken commands ("sit", "shake", …) via a
+  DFRobot DF2301Q offline recognizer on a 2nd I²C bus, feeding the cog-0 command mailboxes. The dog is
+  named **Peabody** (wake phrase "Hello Peabody"); see the release notes and
+  [`DOCs/subsystems/VoiceSensor/`](DOCs/subsystems/VoiceSensor/).
 - **Pan/tilt head + vision AI camera** *(longer-term)* — replace the tilt-only head with a pan/tilt
   mount + an I²C AI camera that reports what it sees (follow / look-at / find).
 - **P2 native audio output** *(longer-term)* — real barks / speech via the P2's smart-pin DAC/PWM,

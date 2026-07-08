@@ -29,7 +29,7 @@ Tier 4 is the behavioral/coordination layer that composes devices into a robot.
 | **1 — transport** | Raw hardware access; one bus / one signal. Knows no device. | bytes, ACK/NAK, pin transitions | `isp_i2c_singleton`, `isp_ws2812.streamBuffer()` |
 | **2 — chip** | Register-level access to one device. | register addresses, raw counts | `isp_i2c_pca9685`, `isp_i2c_ads7830` |
 | **3 — semantics** | The *user's* mental model of one part. | degrees, volts, named colors | `isp_i2c_pca9685_servo`, `isp_battery_monitor`, `isp_leg`, `isp_head`, `isp_led_ring` |
-| **4 — coordination** | Composes many parts into whole-robot behavior. | gaits, poses, commands | `isp_dog_motion` |
+| **4 — coordination** | Composes many parts into whole-robot behavior. | gaits, poses, commands | `isp_dog_motion`, `isp_io_controller`, `isp_led_engine` |
 
 Three structural notes:
 
@@ -49,10 +49,12 @@ Three structural notes:
 ## 2. Object inventory & dependency tree
 
 ```
-robot_dog_top        (T4 top: cog0 orchestrator; cogspins the two service cogs)
-  ├─ isp_dog_motion       (cog1: I²C bus owner, mailbox A) ───────────────────────┐
-  └─ isp_io_controller   (cog2: discrete-pin owner, mailbox B) ──────────┐       │
-                                                                         │       │
+robot_dog_top        (T4 top: cog0 voice dispatch loop; cogspins the two service cogs)
+  ├─ isp_io_controller       (cog1: discrete-pin + voice-bus owner, mailbox B)  → expanded below
+  ├─ isp_dog_motion          (cog2: I²C bus-1 owner, mailbox A)                  → expanded below
+  ├─ isp_voice_command_names (maps DF2301Q CMDID → phrase text for the dispatch log)
+  └─ isp_version             (firmware version constants — single source of truth)
+
 isp_dog_motion            (T4: 4 legs + head + IMU + battery; smooth-motion engine, gait catalog, poses, gestures, leveling)
   ├─ isp_leg  ×4         (T3: one leg; moveToXYZ via shared IK, side-mirror, per-leg calibration)
   │   └─ isp_i2c_pca9685_servo  ×3   (T3 servo, seed)
@@ -63,12 +65,15 @@ isp_dog_motion            (T4: 4 legs + head + IMU + battery; smooth-motion engi
   ├─ isp_battery_monitor (T3: pack volts, low-batt cutoff, median)  │
   │   └─ isp_i2c_ads7830 (T2: ADS7830 counts / pin millivolts)      ├─ isp_i2c_pca9685 (T2)
   └─ isp_calibration     (per-joint servo trims + stance leveling)  │     │
-                                                                    │     └─ isp_i2c_singleton (T1: I²C master)
-isp_io_controller        (T4 IO cog: non-blocking LED + buzzer + ranging service loop)
-  ├─ isp_led_ring        (T3: display modes; owns LED count)
-  │   └─ isp_ws2812      (T1+T2: WS2812 transport + pixel buffer)
+                                                                    │     └─ isp_i2c_singleton (T1: I²C master, bus 1)
+isp_io_controller        (T4 IO cog: non-blocking LED + buzzer + ranging + voice service loop)
+  ├─ isp_led_engine      (T4: SOLE owner of the ring; sustained base modes + single-shot cues)
+  │   └─ isp_led_ring    (T3: display modes; owns LED count)
+  │       └─ isp_ws2812  (T1+T2: WS2812 transport + pixel buffer)
   ├─ isp_buzzer          (T2+T3: buzzer, smart pin — no I²C)
-  └─ isp_hcsr04          (T2+T3: ultrasonic, smart pin — no I²C)
+  ├─ isp_hcsr04          (T2+T3: ultrasonic, smart pin — no I²C)
+  └─ isp_voice_recognizer (T3: DF2301Q @ 0x64 on I²C bus 2, P18/P16; clock-stretch)
+      └─ isp_i2c         (T1: VAR/instance I²C master, bus 2)
 
 (every object) ── DEBUG() built-in (debug output over the 2 Mbaud programming UART)
 ```
@@ -85,8 +90,9 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | `isp_i2c_ads7830.spin2` | 2 | ADS7830 @ `0x48` | `readChannelRaw` / `readChannelMillivolts` (divider-agnostic). VREF 5.0 V (consistent with the metered ÷3 battery) |
 | `isp_battery_monitor.spin2` | 3 | battery | 9-sample median, **÷3 divider** undo (METERED 2026-06-01), `isLowBattery` (<6.4 V) |
 | `isp_ws2812.spin2` | 1·2 | WS2812 strip (7 px) | inline-PASM, CT-paced fixed-cell + GRB buffer (dumb strip). Timing per jm_rgbx_pixel; confirm WS2812 vs B variant |
-| `isp_led_ring.spin2` | 3 | LED display modes | off/solid/wipe/chase/rainbow/rainbow-cycle; `update()` steps one frame |
-| `isp_io_controller.spin2` | 4 | discrete-pin IO cog | non-blocking service loop: LED anim + smart-pin ranging + auto-off buzzer; mailbox B (`postCommand`, `getDistanceMm`/`getPingSeq`/`isLedBusy`) |
+| `isp_led_ring.spin2` | 3 | LED display modes | off/solid/wipe/chase/rainbow/rainbow-cycle/**rainbow-breathe**; `update()` steps one frame |
+| `isp_led_engine.spin2` | 4 | LED engine (sole ring owner) | command-driven: sustained **base** modes + single-shot **cue** overlays (`blink`, latest-wins, revert to base); per-mode pacing (30 ms smooth / 130 ms marching); `service()` stepped by the IO cog. Fixed the earlier multi-writer race |
+| `isp_io_controller.spin2` | 4 | discrete-pin + voice-bus IO cog | non-blocking service loop: LED engine + smart-pin ranging + auto-off buzzer + **DF2301Q voice poll (bus 2)**; mailbox B (`postCommand`, `getDistanceMm`/`getPingSeq`/`isLedBusy`, `getVoiceCmdId`/`getVoiceSeq`/`voicePresent`); `start` (voice-off) / `startWithVoice` |
 | `isp_i2c_mpu6050.spin2` | 2 | MPU6050 @ `0x68` | wake + ±2g/±250°/s; burst-read accel/gyro raw |
 | `isp_imu.spin2` | 3 | attitude | accel milli-g, gyro milli-°/s, `calibrateGyro` (settle + paced + motion-reject → SUCCESS/E_NOT_STILL), `tiltDegrees` (CORDIC). Mahony fusion = TODO |
 | `isp_hcsr04.spin2` | 2·3 | HC-SR04 ultrasonic | polled `readDistanceMm`/`Cm` **and** non-blocking smart-pin path (`startSmart`/`firePing`/`echoReadyMm`) ⚠ verify integrated |
@@ -95,8 +101,11 @@ validated on hardware (outputs are clamped, so they are safe to run during bring
 | `isp_head.spin2` | 3 | head pan (ch 15) | `panTo`/`center`/`sweep` |
 | `isp_calibration.spin2` | 3 | per-robot trims | per-joint servo trims (metered) + head trim + **static stance leveling** (`stanceTrimY`) |
 | `isp_dog_motion.spin2` | 4 | body coordinator | `{Spin2_v47}` cooperative tasks; mailbox A; smooth-motion engine (50 Hz eased), full gait catalog + speed knob, stand/relax/sit, hello, leveling ⚠ verify |
-| `isp_io_controller.spin2` | 4 | discrete-pin IO cog | mailbox B; non-blocking LED + ranging + buzzer (see row above) |
-| `robot_dog_top.spin2` | 4 | integrated 3-cog top | `cogspin`s backend + IO cogs; scripted demo orchestrator over mailboxes A + B ⚠ verify |
+| `isp_i2c.spin2` | 1 | I²C bus master (VAR/instance) | clock-stretch-honoring instance variant for **bus 2** (voice); mirrors the DAT singleton but stores bus state per-instance |
+| `isp_voice_recognizer.spin2` | 3 | DF2301Q @ `0x64` (bus 2) | offline voice recognizer over `isp_i2c`; `getCMDID`/`pollCMDID`, `playByCMDID`, `setVolume`/`setWakeTime`, register-liveness presence probe (defeats parasitic-power false positive) |
+| `isp_voice_command_names.spin2` | 3 | CMDID → phrase names | built-in vocabulary tables + `registerCustomTable()` for custom slots 5–21; `cmdName(id)` → text (dispatch log) |
+| `isp_version.spin2` | — | firmware version | single source of truth `FW_VERSION_MAJOR/_MINOR/_PATCH` (0.3.0) |
+| `robot_dog_top.spin2` | 4 | integrated 3-cog top | `cogspin`s IO (cog1) + backend (cog2); runs the **persistent voice dispatch loop** — maps recognized CMDID→`CMD_*` (`voiceToDogCmd()`) and posts to mailbox A through the motion gate; legacy scripted self-test behind `DEMO_ON_BOOT` ⚠ verify (live voice→motion) |
 
 There is **no shared OBEX driver** for the ADS7830, MPU6050, or HC-SR04 — each is
 hand-rolled on the seed I²C singleton (or a smart pin). The **full gait catalog**
@@ -142,8 +151,10 @@ role from that identity.
   specified in
   [`../DOCs/spec/P2-RobotDog-Specifications.md`](../DOCs/spec/P2-RobotDog-Specifications.md); the
   as-built engine is ToOps §6.2.
-- **The three cogs are assembled in `robot_dog_top`** — it `cogspin`s the backend (I²C, mailbox
-  A) and `isp_io_controller` (discrete pins, mailbox B), and runs a scripted orchestrator on cog 0.
+- **The three cogs are assembled in `robot_dog_top`** — it `cogspin`s `isp_io_controller` (cog 1:
+  discrete pins + voice bus, mailbox B) and the backend (cog 2: I²C, mailbox A), and runs the
+  **persistent voice dispatch loop** on cog 0 (maps a recognized CMDID → `CMD_*` via `voiceToDogCmd()`
+  and posts to mailbox A through the motion gate).
 
 > ✅ The FL/BL/BR/FR ↔ channel assignment is **verified on hardware 2026-06-01** — each commanded
 > leg moved the matching physical leg (FL=4/3/2, BL=7/6/5, BR=8/9/10, FR=11/12/13, head=15). The
@@ -172,7 +183,13 @@ Buzzer +2, TRIG +3, SCL +5, SDA +7). **Authoritative table + rationale:
 | P12 | — | *spare* | — | — |
 | P13 | 5 | I²C SCL | `isp_i2c_singleton` | I²C (`PU_1K5`) |
 | P14 | — | *spare* | — | — |
-| P15 | 3 | I²C SDA | `isp_i2c_singleton` | I²C (`PU_1K5`; 6.9 kΩ board pull-down) |
+| P15 | 3 | I²C SDA (bus 1) | `isp_i2c_singleton` | I²C (`PU_1K5`; 6.9 kΩ board pull-down) |
+| P16 | — | I²C SDA (**bus 2, voice**) | `isp_voice_recognizer` via `isp_i2c` | I²C (`PU_1K5`) |
+| P18 | — | I²C SCL (**bus 2, voice**) | `isp_voice_recognizer` via `isp_i2c` | I²C (`PU_1K5`) |
+
+> **Bus 2 (voice)** — P16/P18 sit **outside** the P8–P15 as-built block (they were unallocated). The
+> DF2301Q voice recognizer (`0x64`) wires **direct to the module**, not through the robot header, and is
+> owned by the IO cog (cog 1). See wiring §3a.
 
 ### Devices behind the I²C bus (P13/P15)
 
@@ -195,15 +212,17 @@ Buzzer +2, TRIG +3, SCL +5, SDA +7). **Authoritative table + rationale:
 The static tiers above are partitioned across P2 cogs at runtime, by **resource ownership** —
 comms plus two service cogs, one per hardware domain. In brief:
 
-- **Cog 0 — comms / orchestration:** owns the command link only; posts intents to both
-  service cogs and reads their telemetry. Never blocks on a peripheral.
-- **Cog 1 — backend body-control:** the **sole owner of the I²C bus** (servos + IMU +
-  battery); runs motion and IMU/battery sensing as **Spin2 v47 cooperative tasks** — so the
-  shared bus is never touched by two cogs, with no lock.
-- **Cog 2 — discrete-pin IO:** owns the **non-I²C pins** — WS2812 LED (P8), buzzer (P10),
-  ultrasonic (ECHO P9 / TRIG P11). One owner per pin (cross-cog pin handoff is costly); runs LED animation,
-  ranging, and beeps as non-blocking tasks (smart-pin timing → ~1 % cog load, no jitter), and
-  is the ultrasonic distance producer.
+- **Cog 0 — comms / voice dispatch:** owns the command link only; runs the persistent voice dispatch
+  loop — reads the IO cog's voice telemetry, maps each CMDID → behavior (`voiceToDogCmd()`), and posts
+  intents to both service cogs while reading their telemetry. Never blocks on a peripheral.
+- **Cog 1 — discrete-pin + voice IO** (launched first): owns the **non-I²C pins** — WS2812 LED (P8),
+  buzzer (P10), ultrasonic (ECHO P9 / TRIG P11) — **and I²C bus 2** (P18/P16) for the DF2301Q voice
+  recognizer. One owner per pin (cross-cog pin handoff is costly); runs the LED engine, ranging, beeps,
+  and voice polling as non-blocking tasks (smart-pin timing → ~1 % cog load, no jitter); it is the
+  ultrasonic distance producer and the recognized-CMDID producer.
+- **Cog 2 — backend body-control:** the **sole owner of I²C bus 1** (servos + IMU + battery); runs
+  motion and IMU/battery sensing as **Spin2 v47 cooperative tasks** — so the shared bus is never
+  touched by two cogs, with no lock.
 
 Each service cog is fed by its own hub mailbox (commands in, telemetry out). The full cog map,
 the concurrency model, the mailbox protocol, and the backend state machine are documented in
@@ -213,9 +232,12 @@ the concurrency model, the mailbox protocol, and the backend state machine are d
 
 ## 6. Electrical gotchas (recap — see wiring doc for the authoritative treatment)
 
-- **The P2 is 3.3 V and NOT 5 V tolerant** (pin abs-max ≈ 3.6 V). Every signal *into* a P2
-  pin must be ≤ 3.3 V — watch the 5 V-native parts: **HC-SR04 ECHO** (needs a divider) and
-  **WS2812** data (3.3 V out into a 5 V strip — a level shifter is the robust fix).
+- **The P2 cannot *drive* 5 V, and a *bare* pin must stay ≤ ~3.6 V — but it can safely *read* 5 V
+  through a series resistor** (the pin's internal clamp diode to VIO absorbs the overshoot at ≤ 10 mA,
+  so R ≥ (Vin − 3.6)/10 mA ≈ 1 kΩ). **HC-SR04 ECHO** carries **undivided 5 V** on header pin 15 (the
+  board does *not* divide it, metered 2026-05/06-01), so it reaches **P9 through a ~1 kΩ series R** —
+  ranging is verified working. **WS2812** data is 3.3 V out into a 5 V strip (works on this hardware; a
+  74AHCT125 level shifter is the robust fix if the first pixel is ever flaky).
 - **The 3.3 V rail vanishes with the Pi.** The adapter must put 3.3 V back on header
   pins 1/17 for the board's I²C pull-ups/chips. (#1 gotcha.)
 - **Power flows robot → controller**: feed the P2 board 5 V (header pins 2/4); it regulates
@@ -270,9 +292,13 @@ These were used for the 2026-06-01 bring-up (results: `../DOCs/P2-platform/P2_MI
 commands — never a single-cog shape): **`test_dog_stand.spin2`** (eased poses), **`test_dog_level.spin2`**
 (IMU static-leveling measure), and **`test_dog_gaits.spin2`** (full gait catalog + speed) each keep
 the IO cog present-but-quiescent (static LED, ranging dormant), while **`robot_dog_top.spin2`**
-is the full concurrency runtime (LED animation + live ranging + motion + beep, scripted orchestrator
-on cog 0). They drive `DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`. The real frontend
-comms cog (Wi-Fi/serial command link) is still **TODO**.
+runs the **persistent voice dispatch loop** by default (the legacy full-concurrency self-test — LED
+animation + live ranging + motion + beep at once — is preserved behind `DEMO_ON_BOOT`). They drive
+`DOCs/plans/SMOOTH-MOTION-AND-INTEGRATION-TEST-PLAYBOOK.md`. Voice is exercised in isolation by
+**`test_voice.spin2`** (do we hear commands over I²C bus 2) and **`test_voice_map.spin2`** (catalog the
+trained custom slots 1:1); the LED engine by **`test_led_engine.spin2`** / **`test_led_onoff.spin2`**.
+The real frontend comms cog (Wi-Fi/serial command link) is still **TODO** — **voice is today's command
+source**.
 
 `.bin` / `.lst` / `.obj` outputs are build artifacts — don't commit them.
 

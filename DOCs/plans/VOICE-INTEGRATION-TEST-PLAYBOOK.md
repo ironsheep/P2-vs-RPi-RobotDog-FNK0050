@@ -1,5 +1,13 @@
 # VOICE-INTEGRATION — Bench Verification Playbook
 
+> ⚠ **Historical (plumbing-phase) artifact.** This playbook was written when the `voiceToDogCmd()` seam
+> deliberately returned `CMD_NONE` for every word and Exercise 5 used a *throwaway* mapping that had to be
+> reverted. The **CMDID→behavior map has since been completed** and is wired live (custom slots 5–21 +
+> built-in aliases 22/23) — so the "no spoken word moves the dog" / "mandatory revert to `CMD_NONE`"
+> instructions below are **superseded**. For current behavior see
+> [`../subsystems/VoiceSensor/VOICE-COMMAND-MAP.md`](../subsystems/VoiceSensor/VOICE-COMMAND-MAP.md) and
+> the Theory of Operations §2/§5. The wiring/observability exercises (0–4, 6) still stand.
+
 **Build:** 0.3.0 · **Targets:** 1 P2 bench unit (DF2301Q voice on the 2nd I²C bus, P18 SCL / P16 SDA)
 — plus the host (no robot) for Exercise 0, and a **multimeter** for Exercise 1. **Est. run time:**
 ~45–60 min.

@@ -26,17 +26,19 @@ firmware *does* and how a caller drives it.
 
 ## 1. Overview
 
-The firmware runs as **three cogs** (ToOps §2): a comms/orchestrator cog (cog 0), the backend
-body-control cog (cog 1, the sole I²C-bus owner), and the discrete-pin IO cog (cog 2). A caller on
-cog 0 drives the robot **only** through two hub mailboxes — never by touching a bus or pin:
+The firmware runs as **three cogs** (ToOps §2): a comms/dispatch cog (cog 0), the discrete-pin IO cog
+(cog 1, launched first — owns the discrete pins + voice bus), and the backend body-control cog (cog 2,
+the sole I²C bus-1 owner). A caller on cog 0 drives the robot **only** through two hub mailboxes —
+never by touching a bus or pin:
 
 - **Mailbox A → backend** (`isp_dog_motion`): motion, posture, head, gestures; reports attitude,
   battery, mode.
 - **Mailbox B → IO** (`isp_io_controller`): LED ring, buzzer, ultrasonic ranging; reports distance,
   ping sequence, LED-busy.
 
-`src/robot_dog_top.spin2` is the first object to assemble all three cogs; it runs a scripted
-demo orchestrator (a stand-in until the real Wi-Fi/serial command link is built).
+`src/robot_dog_top.spin2` is the first object to assemble all three cogs; it runs the **persistent
+voice dispatch loop** — voice is today's command source, a stand-in until the real Wi-Fi/serial command
+link is built (the legacy scripted demo is preserved behind `DEMO_ON_BOOT`).
 
 ---
 
@@ -216,9 +218,9 @@ color is posted); `RAINBOW`/`RAINBOW_CYCLE` self-color via the wheel.
 
 `robot_dog_top.main()` runs on cog 0 and:
 
-1. `cogspin` **IO** → cog 2: `io.startWithVoice(WS2812=8, BUZZER=10, TRIG=11, ECHO=9, VSCL=18, VSDA=16)`
+1. `cogspin` **IO** *(first)* → cog 1: `io.startWithVoice(WS2812=8, BUZZER=10, TRIG=11, ECHO=9, VSCL=18, VSDA=16)`
    — owns the discrete pins **and I²C bus 2** for voice (the 4-arg `io.start(...)` launches voice-off).
-2. `cogspin` **backend** → cog 1: `dog.start(SCL=13, SDA=15)` (inits, gyro-cals, stands).
+2. `cogspin` **backend** → cog 2: `dog.start(SCL=13, SDA=15)` (inits, gyro-cals, stands).
 3. Enters the **persistent dispatch loop** (§4.4): watch the IO cog's voice telemetry and hand
    recognized commands to mailbox A, gated on motion-completion. The legacy scripted concurrency
    self-test (LED animation + live ranging + a gait + a beep at once, D7) is preserved behind the
@@ -233,7 +235,7 @@ driver kit lives in `src/` (`isp_voice_recognizer`, `isp_voice_command_names`) a
 covers only how it integrates.
 
 **Bus & ownership.** The module sits on a **separate 2nd I²C bus** (P18 = SCL, P16 = SDA), **owned by
-the IO cog** (cog 2) — bus 1 (backend/cog 1) and bus 2 (IO/cog 2) never cross cogs. The DF2301Q
+the IO cog** (cog 1) — bus 1 (backend/cog 2) and bus 2 (IO/cog 1) never cross cogs. The DF2301Q
 **clock-stretches**; the bus master (`isp_i2c`, VAR/instance variant) honors the stretch with a bounded
 guard. The IO cog polls the recognizer in its existing non-blocking round-robin (alongside LED / buzzer
 / ultrasonic), so voice adds no cog.
@@ -250,16 +252,23 @@ motion-completion** from existing backend signals (`getMoveComplete`/`getModeSta
 `isHalted`): hold mid one-shot, allow a new command to supersede a latched gait, suppress on a
 critical-battery halt.
 
-> **Scope — this build (0.3.0) is plumbing + observability only.** The `voiceToDogCmd()` seam returns
-> `CMD_NONE` for **every** word, so the dispatch loop computes and DEBUG-traces its decisions but posts
-> nothing. **Which spoken word maps to which behavior — and the custom-word slot assignment — is a
-> SEPARATE next sprint.** New harness `src/test_voice.spin2` proves "do we hear commands over I²C, and
-> which CMDIDs arrive" in isolation (IO cog only, dog unpowered-safe).
+> **Scope — the CMDID→behavior map is now complete (build 0.3.0).** `voiceToDogCmd()` maps the **17
+> custom slots 5–21** to the matching `CMD_*` (Stand, Sit, Lie Down, Crouch, Relax, Bow, Forward,
+> Backward, Turn L/R, Halt, Say Hi, Shake, Salute, Push Ups, Nod, Parade Rest) plus **built-in aliases
+> 22 `Go Forward`→`CMD_FORWARD` and 23 `Retreat`→`CMD_BACKWARD`** (factory words that cover the
+> recognizer's near-misses); any other CMDID → `CMD_NONE` (ignored). The 17-word vocabulary was trained
+> in **one uninterrupted session** (interrupting corrupts the DF2301Q's sequential slot assignment) and
+> cataloged 1:1 by `src/test_voice_map.spin2`. Authoritative map + training order:
+> [`../subsystems/VoiceSensor/VOICE-COMMAND-MAP.md`](../subsystems/VoiceSensor/VOICE-COMMAND-MAP.md).
+> The harness `src/test_voice.spin2` still proves "do we hear commands over I²C, and which CMDIDs arrive"
+> in isolation (IO cog only, dog unpowered-safe). **Open:** the live end-to-end voice→motion bench run.
 
 **Feedback.** The DF2301Q speaks its own verbal acknowledgement (free). The firmware adds a **minimal
-green LED blink** on each recognition this sprint. The **intended full LED feedback model** (documented
-target for the mapping sprint) is: **spinning green = acting on a recognized command**, **red =
-recognized but refused** (e.g. gated/halted), **off = idle/listening**.
+green LED blink** on each recognition — the IO cog requests a single-shot green cue from the LED engine
+(`isp_led_engine`, 120 ms, reverts to the base mode). The **intended full LED feedback model** is:
+**spinning green = acting on a recognized command**, **red = recognized but refused** (e.g. gated/
+halted), **off = idle/listening** — the LED engine now makes this easy, but it is **not yet driven from
+the dispatch loop** (still open; only the basic green recognition cue is wired).
 
 **Electrical (resolved).** `VOICE_I2C_PULLUP = PU_1K5` (P2 internal strong pull-up), matching the
 bench-proven working driver on this hardware (vendor quick-start + `custom_words_example` both call
@@ -319,7 +328,7 @@ Backend-owned (D2), independent of frontend commands. **Two tiers:**
 
 ---
 
-## 7. Constants reference (build 0.2.0)
+## 7. Constants reference (build 0.3.0)
 
 | Constant | Value | Meaning |
 |----------|-------|---------|

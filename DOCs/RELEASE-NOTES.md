@@ -4,6 +4,48 @@ User-facing summary of each firmware build. Newest at the top.
 
 ---
 
+## 0.3.0 — 2026-06-11
+
+Adds the **Voice Integration** work — the dog now has a name and a spoken command source — plus a
+rebuilt LED system. The recognizer and its command map are bench-confirmed; the live "speak a word,
+watch the dog do it" run is the next bench step.
+
+**The dog can now be commanded by voice**
+
+- **Say "Hello Peabody," then a command.** The dog is named **Peabody**. A DFRobot DF2301Q offline
+  voice module (a P2-only addition, on its own 2nd I²C bus — no cloud, no network) listens for the wake
+  phrase and then a command word.
+- **A 17-word vocabulary, one word per action:** Stand, Sit, Lie Down, Crouch, Relax, Take a Bow,
+  Forward, Backward, Turn Left, Turn Right, Halt, Say Hi, Shake, Salute, Push Ups, Nod Yes, Parade Rest.
+  Each recognized word is mapped to the matching motion and handed to the body — held if the dog is
+  mid-gesture, allowed to interrupt a walk, and refused if the battery has cut out.
+- **Two spare "factory" words** — "Go Forward" and "Retreat" — are accepted as extra triggers for
+  Forward and Backward, covering the times the recognizer mishears those two rhyming words.
+- **How the vocabulary is trained matters:** all 17 words must be trained in **one uninterrupted
+  session** — pausing partway silently corrupts the module's slot assignment. (This was learned the
+  hard way; the user guide now spells it out.)
+
+**A rebuilt LED ring**
+
+- The ring is now driven by a single **LED engine** — one owner, no more flicker from competing
+  writers. It offers sustained looks (off / solid / color-wipe / theater-chase / rainbow / rainbow-cycle
+  / a new **breathing rainbow** throb) plus brief one-shot **cues** that flash and return to whatever
+  was showing. A short **green blink** now acknowledges each recognized voice command.
+
+**Confirmed on the bench**
+
+- The recognizer is **present-checked** so a powered-off-but-wired module can't fool the firmware into
+  thinking voice is live. All 17 words trained cleanly and were cataloged as a clean 1:1 map.
+
+**Known / not yet done**
+
+- The **live end-to-end voice→motion demo** — the dog actually performing each spoken command through
+  the full path — has not yet been run on the bench. That's the headline next step.
+- The **full LED feedback scheme** (spinning green = acting, red = refused, off = idle) is designed and
+  now easy to wire, but only the basic green recognition blink is hooked up so far.
+
+---
+
 ## 0.2.0 — 2026-06-09
 
 Closes the **Dog-Like-Motion-01 Keystone** sprint — the dog's resting stance was rebuilt so poses and

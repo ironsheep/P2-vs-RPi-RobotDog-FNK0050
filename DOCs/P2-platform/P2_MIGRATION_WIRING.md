@@ -204,8 +204,8 @@ TRIG +3, SCL +5, SDA +7** (P12 and P14 left spare). Rows are in P2-pin order.
 
 A **DFRobot DF2301Q "Gravity" offline voice recognizer** (SKU SEN0539, I²C `0x64`) was added on the
 P2 build — it is **not** part of the stock Freenove kit. It sits on a **separate 2nd I²C bus**
-(P18 = SCL, P16 = SDA), owned by the **IO cog** (cog 2), so the two buses never cross cogs (bus 1 =
-backend/cog 1; bus 2 = IO/cog 2). The module **clock-stretches** (holds SCL low while it prepares a
+(P18 = SCL, P16 = SDA), owned by the **IO cog** (cog 1), so the two buses never cross cogs (bus 1 =
+backend/cog 2; bus 2 = IO/cog 1). The module **clock-stretches** (holds SCL low while it prepares a
 reply); the bus master (`isp_i2c`, the VAR/instance variant) honors the stretch with a bounded guard.
 
 **Power & pull-ups (bus 2):**

@@ -21,22 +21,21 @@ are recorded here so the intent — and the hardware/integration thinking behind
 
 ---
 
-## 1. Speech recognition — *short-term, next up*
+## 1. Speech recognition — *✅ implemented (build 0.3.0)*
 
-**What.** A speech-recognition **module** so the dog takes **spoken** commands — "sit", "shake",
-"forward", "hello" — instead of only scripted/mailbox commands.
+**Shipped.** The dog now takes **spoken** commands. A **DFRobot DF2301Q "Gravity" offline voice
+recognizer** (`0x64`) was chosen and integrated on a **dedicated 2nd I²C bus** (P18 SCL / P16 SDA), owned
+by the IO cog (cog 1). The wake phrase is **"Hello Peabody"**; a 17-word custom vocabulary maps 1:1 to the
+dog's `CMD_*` set (plus built-in aliases), dispatched by the cog-0 loop through the motion gate. Full
+detail: [`subsystems/VoiceSensor/`](subsystems/VoiceSensor/) and the release notes. Remaining polish: the
+live end-to-end bench demo and the full LED feedback scheme.
 
-**Hardware candidate.** [amazon.com/dp/B0C5XG3BXW](https://www.amazon.com/dp/B0C5XG3BXW) — interface
-**UART *or* I²C**.
-
-**P2 integration.**
-- **Prefer UART** if it exposes the richer stream (recognized phrase/ID **+ confidence**), vs an I²C
-  "poll a result register" mode — confidence lets us gate noisy matches and support a larger
-  vocabulary. UART drops onto a P2 smart-pin serial; I²C joins the existing bus.
-- Recognized command → look up the matching `CMD_*` → `postCommand` into mailbox A/B. No motion change.
-
-**Open questions.** Confirm what each interface mode actually returns; wake-word vs push-to-talk;
-vocabulary mapping table (spoken phrase → `CMD_*`).
+**How the choice landed vs. the original candidates** (kept for the record). The exploration considered a
+UART-*or*-I²C module ([amazon.com/dp/B0C5XG3BXW](https://www.amazon.com/dp/B0C5XG3BXW)) and leaned UART for
+a confidence stream. In practice the **I²C DF2301Q** was selected — it does fully-offline recognition with
+its own trained vocabulary and reports a latched command-word **ID** (no confidence field), polled from a
+result register; it clock-stretches, so it got its own bus rather than joining bus 1. Recognized ID →
+`voiceToDogCmd()` → `postCommand` into mailbox A, exactly the "no motion change" integration anticipated.
 
 ---
 
@@ -119,14 +118,14 @@ freeze); how to fold a correction into the fixed-rate eased engine without fight
 
 | Direction | Device | Interface | Status |
 |---|---|---|---|
-| Speech | [B0C5XG3BXW](https://www.amazon.com/dp/B0C5XG3BXW) | UART (richer) / I²C | short-term, next up |
+| ~~Speech~~ | **DFRobot DF2301Q** (SEN0539, `0x64`) | I²C (2nd bus, P18/P16) | **✅ implemented (0.3.0)** |
 | Vision + pan/tilt head | [B0CX93M5DW](https://www.amazon.com/dp/B0CX93M5DW) | I²C | longer-term |
 | Audio out | *(P2 smart-pin DAC/PWM)* | — | longer-term |
 | BLE remote | [B0DRNSV5CS](https://www.amazon.com/dp/B0DRNSV5CS) / [B0GGB1L8N5](https://www.amazon.com/dp/B0GGB1L8N5) | SPI / I²C | longer-term (pick one) |
 
-> **Pin/bus budget is not a constraint.** Only P8–P15 are in use today, so P0–P7 and P16–P57 are
-> open: a UART speech module (2 pins) plus an SPI BLE (~4 pins) fit easily, and the I²C devices just
-> need distinct addresses on the existing master.
+> **Pin/bus budget is not a constraint.** Only P8–P15 (robot signals) plus P16/P18 (the voice 2nd I²C
+> bus) are in use today, so P0–P7, P17, and P19–P57 are open: an SPI BLE (~4 pins) fits easily, and more
+> I²C devices just need distinct addresses on the existing masters.
 
 ---
 

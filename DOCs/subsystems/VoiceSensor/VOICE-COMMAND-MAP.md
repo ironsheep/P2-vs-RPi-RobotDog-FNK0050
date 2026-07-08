@@ -53,15 +53,17 @@ continuous gait our "Turn Left/Right" runs.)
 selector, SPIN (a timed turn), SPEAK (bark+nod composite).
 
 ## Status
-- 2026-06-10/11 (4 catalog runs): **slots 5–15 reliably trained** (Stand…Halt, 1:1 in order). **16–21
-  never committed** — those words alias onto 6/7/8/9 (multiple words -> same CMDID). ROOT CAUSE
-  (per Stephen): the original training session was **interrupted mid-way** and words were added after a
-  break, which corrupts the DF2301Q's sequential slot assignment -- so the "~11 cap" is likely an
-  artifact of the broken session, not a real device limit.
-- **Plan (2026-06-11):** **wipe all custom words, retrain all 17 in ONE uninterrupted pass** in the order
-  above, then catalog twice (`test_voice_map`) and diff the SUMMARY blocks -- identical == trusted. This
-  answers both unknowns: *can we train cleanly?* and *can we identify the trained words?*
-- **Easier-to-train words applied** (single-syllable words train poorly): Bow -> **"Take a Bow"**,
-  Hello/Wave -> **"Say Hi"** (also dodges the "Hello Peabody" wake phrase), Nod -> **"Nod Yes"**.
-- The robot is already wired (`voiceToDogCmd()`); once the catalog confirms, trim only if some slots
-  still won't take, then add LED feedback.
+- **All 17 custom words trained & confirmed 1:1 (2026-06-11).** After a clean wipe-and-retrain in **one
+  uninterrupted session**, every word committed to its own slot (5..21) and `test_voice_map` cataloged the
+  vocabulary 1:1 in training order. The earlier "~11-word cap" was an artifact of an **interrupted**
+  training session (words added after a break corrupt the DF2301Q's sequential slot assignment) — **not**
+  a device limit; retraining in one pass resolved it.
+- **`voiceToDogCmd()` is wired live** (`robot_dog_top`): CMDIDs 5..21 → the matching `CMD_*`, plus the
+  built-in aliases 22/23 above. `registerCustomTable()` is registered so the dispatch log resolves each
+  CMDID to its phrase.
+- **Easier-to-train words applied** (single-syllable words train poorly): Bow → **"Take a Bow"**,
+  Hello/Wave → **"Say Hi"** (also dodges the "Hello Peabody" wake phrase), Nod → **"Nod Yes"**.
+- **Known flaky pair:** "Backward" ↔ "Forward" occasionally confuse (they rhyme); the "Retreat" / "Go
+  Forward" built-in aliases backstop this. Retrain "Backward" → "Reverse" if the confusion bothers a demo.
+- **Open:** the live end-to-end voice→motion bench run, and the full LED feedback scheme (only the basic
+  green recognition blink is wired today).

@@ -48,7 +48,7 @@ I²C master:
 
 A **2nd I²C bus** (P2-only addition — **not** in the stock Freenove kit) carries the **DF2301Q
 offline voice recognizer @ `0x64`** (DFRobot "Gravity" SEN0539; clock-stretches). It is on its own
-bus (P18=SCL/P16=SDA), owned by the **IO cog** (cog 2), separate from the Pi-era bus above. See the
+bus (P18=SCL/P16=SDA), owned by the **IO cog** (cog 1), separate from the Pi-era bus above. See the
 voice subsystem in `DOCs/spec/P2-RobotDog-Specifications.md` and `DOCs/subsystems/VoiceSensor/`.
 
 Only **three peripherals use discrete GPIO** (each a natural P2 smart-pin job):
